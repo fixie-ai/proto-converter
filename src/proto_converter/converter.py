@@ -365,6 +365,9 @@ class ProtoConverter(Generic[F, T]):
                 f"Source has fields: {src_names}.\nDestination has fields: {dest_names}."
             )
 
+        # Freeze to sets now that mutation is done — used for O(1) lookups in _auto_convert.
+        self._skip_fields = set(self._field_names_to_ignore) | set(self._unconverted_fields)
+
     def _register_recursive_converters(
         self,
         src_fields: Sequence[FieldDescriptor],
@@ -462,10 +465,7 @@ class ProtoConverter(Generic[F, T]):
         for _src_fd, src_value in src.ListFields():
             # Protobuf stubs union two FieldDescriptor implementations; cast to the public one.
             src_fd: FieldDescriptor = _src_fd  # type: ignore[assignment]
-            if (
-                src_fd.name in self._field_names_to_ignore
-                or src_fd.name in self._unconverted_fields
-            ):
+            if src_fd.name in self._skip_fields:
                 continue
 
             dest_fd: FieldDescriptor = dest.DESCRIPTOR.fields_by_name[src_fd.name]  # type: ignore[assignment]

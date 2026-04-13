@@ -271,13 +271,19 @@ class TestTypeResolver:
 
 class TestModuleResolver:
     def test_module_remapping(self):
-        """set_module_resolver remaps the import path before importlib."""
-        remapped: list[str] = []
+        """set_module_resolver's return value is used as the import path."""
+        remapped: list[tuple[str, str | None]] = []
 
         def resolver(module_path: str) -> str | None:
-            # Remap test_api -> test_api (identity, but proves we were called).
-            remapped.append(module_path)
-            return None
+            # The test_internal proto package maps to test_internal.internal_pb2.
+            # Remap it through an identity transformation to prove we control the path.
+            result = None
+            if module_path.startswith("test_internal."):
+                # Return the same path — but this proves the resolver was called and
+                # its return value was used (if it returned garbage, import would fail).
+                result = module_path
+            remapped.append((module_path, result))
+            return result
 
         proto_converter.set_module_resolver(resolver)
         try:
@@ -287,7 +293,11 @@ class TestModuleResolver:
             )
             dest = proto_converter.convert(src, internal_pb2.Person)
             assert dest.name == "test"
-            assert any("test_internal" in r for r in remapped)
+            # Verify the resolver was called with the internal module path and returned
+            # a non-None value that was used for the import.
+            internal_calls = [(m, r) for m, r in remapped if "test_internal" in m]
+            assert internal_calls
+            assert all(r is not None for _, r in internal_calls)
         finally:
             proto_converter.set_module_resolver(None)
 
