@@ -135,6 +135,17 @@ def _is_src_field_auto_convertible(
             src_map["key"], dest_map
         ) and _is_src_field_auto_convertible(src_map["value"], dest_map)
 
+    if src_field.type == FieldDescriptor.TYPE_ENUM:
+        src_enum = src_field.enum_type
+        dest_enum = dest_field.enum_type
+        if src_enum == dest_enum:
+            return True
+        # Different enum types: auto-convertible if every source value number exists in dest.
+        if src_enum is not None and dest_enum is not None:
+            dest_numbers = {v.number for v in dest_enum.values}
+            return all(v.number in dest_numbers for v in src_enum.values)
+        return False
+
     if src_field.type == FieldDescriptor.TYPE_MESSAGE:
         if _is_any_field(src_field) and _is_any_field(dest_field):
             return True

@@ -88,6 +88,24 @@ class TestAutoConvert:
         dest = proto_converter.convert(src, internal_pb2.SimpleMessage)
         assert dest == internal_pb2.SimpleMessage()
 
+    def test_compatible_enum(self):
+        """api Status {0,1,2} -> internal Status {0,1,2,3}: all source values exist in dest."""
+        src = api_pb2.EnumMessage(name="test", status=api_pb2.STATUS_ACTIVE)
+        dest = proto_converter.convert(src, internal_pb2.EnumMessage)
+        assert dest.name == "test"
+        assert dest.status == internal_pb2.STATUS_ACTIVE
+
+    def test_enum_dest_superset(self):
+        """internal Status {0,1,2,3} is a superset of api Status {0,1,2}, so
+        api -> internal works but internal -> api requires explicit handling
+        (since ARCHIVED=3 has no api counterpart)."""
+        src = api_pb2.EnumMessage(name="test", status=api_pb2.STATUS_INACTIVE)
+        dest = proto_converter.convert(src, internal_pb2.EnumMessage)
+        assert dest.status == internal_pb2.STATUS_INACTIVE
+
+        with pytest.raises(NotImplementedError, match="status"):
+            proto_converter.get_converter(internal_pb2.EnumMessage, api_pb2.EnumMessage)
+
 
 # ---------------------------------------------------------------------------
 # IGNORED_FIELDS
@@ -253,3 +271,10 @@ class TestErrors:
 
             class Bad(proto_converter.ProtoConverter[internal_pb2.Person, api_pb2.Person]):
                 pass
+
+    def test_incompatible_enum(self):
+        """api IncompatiblePriority has CRITICAL (3) which internal lacks."""
+        with pytest.raises(NotImplementedError, match="priority"):
+            proto_converter.get_converter(
+                api_pb2.IncompatibleEnumMessage, internal_pb2.IncompatibleEnumMessage
+            )

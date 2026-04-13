@@ -37,6 +37,31 @@ message OneofMessage {
   }
 }
 
+// Compatible with api Status — same values, plus an extra one.
+enum Status {
+  STATUS_UNKNOWN = 0;
+  STATUS_ACTIVE = 1;
+  STATUS_INACTIVE = 2;
+  STATUS_ARCHIVED = 3;
+}
+
+// Only has values 0-2, missing api's CRITICAL (3).
+enum IncompatiblePriority {
+  INCOMPATIBLE_PRIORITY_UNSPECIFIED = 0;
+  INCOMPATIBLE_PRIORITY_LOW = 1;
+  INCOMPATIBLE_PRIORITY_HIGH = 2;
+}
+
+message EnumMessage {
+  string name = 1;
+  Status status = 2;
+}
+
+message IncompatibleEnumMessage {
+  string name = 1;
+  IncompatiblePriority priority = 2;
+}
+
 message InternalDetail {
   string info = 1;
   int32 priority = 2;
