@@ -89,8 +89,10 @@ proto_converter.set_type_resolver(my_resolver)
 ## Development
 
 ```bash
-uv sync                          # install deps
-bash tests/gen_protos.sh         # generate test protos and install into venv
-uv run pytest                    # run tests
-uv run ruff check src/ tests/    # lint
+just setup                       # install deps + generate test protos
+just                             # format, check, and test (the default)
+just test                        # just tests
+just check                       # lint + type check
+just format                      # auto-format
+just build-protos                # regenerate test protos after changing .proto files
 ```

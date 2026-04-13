@@ -13,11 +13,17 @@ from __future__ import annotations
 import functools
 import importlib
 import logging
-from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Generic, TypeVar
+from collections.abc import Callable
+from collections.abc import Mapping
+from collections.abc import Sequence
+from typing import Any
+from typing import Generic
+from typing import TypeVar
 
-from google.protobuf import any_pb2, message, symbol_database
+from google.protobuf import any_pb2
 from google.protobuf import descriptor as descriptor_mod
+from google.protobuf import message
+from google.protobuf import symbol_database
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +250,8 @@ class ProtoConverter(Generic[F, T]):
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         # Extract generic type args from the class definition.
-        from typing import get_args, get_origin
+        from typing import get_args
+        from typing import get_origin
 
         orig_bases = getattr(cls, "__orig_bases__", ())
         for base in orig_bases:
@@ -282,12 +289,14 @@ class ProtoConverter(Generic[F, T]):
                     obj.convert_field_names  # pyright: ignore[reportFunctionMemberAccess]
                 )
 
-        src_fields = self._pb_class_from.DESCRIPTOR.fields
-        dest_fields_by_name = self._pb_class_to.DESCRIPTOR.fields_by_name
+        # Protobuf stubs union two FieldDescriptor implementations; cast to the public one.
+        src_fields: Sequence[FieldDescriptor] = self._pb_class_from.DESCRIPTOR.fields  # type: ignore[assignment]
+        dest_by_name: Mapping[str, FieldDescriptor] = self._pb_class_to.DESCRIPTOR.fields_by_name  # type: ignore[assignment]
 
-        # pyright: ignore — protobuf stubs union two FieldDescriptor implementations
         self._unconverted_fields = self._get_unhandled_fields(
-            src_fields, dest_fields_by_name, self._field_names_to_ignore  # pyright: ignore[reportArgumentType]
+            src_fields,
+            dest_by_name,
+            self._field_names_to_ignore,
         )
 
         if self._pb_class_from.DESCRIPTOR.oneofs:
@@ -302,7 +311,7 @@ class ProtoConverter(Generic[F, T]):
         unconverted = set(self._unconverted_fields) - set(self._function_convert_field_names)
         if unconverted:
             src_names = {f.name for f in src_fields}
-            dest_names = set(dest_fields_by_name.keys())
+            dest_names = set(dest_by_name.keys())
             raise NotImplementedError(
                 "Fields can't be automatically converted; must either be explicitly handled "
                 f"or ignored. Converting from {self._pb_class_from} to {self._pb_class_to}. "
