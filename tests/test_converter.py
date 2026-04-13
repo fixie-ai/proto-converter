@@ -269,6 +269,54 @@ class TestTypeResolver:
             proto_converter.set_type_resolver(None)
 
 
+class TestModuleResolver:
+    def test_module_remapping(self):
+        """set_module_resolver remaps the import path before importlib."""
+        remapped: list[str] = []
+
+        def resolver(module_path: str) -> str | None:
+            # Remap test_api -> test_api (identity, but proves we were called).
+            remapped.append(module_path)
+            return None
+
+        proto_converter.set_module_resolver(resolver)
+        try:
+            src = api_pb2.Person(
+                name="test",
+                address=api_pb2.Address(street="Main St", city="Town"),
+            )
+            dest = proto_converter.convert(src, internal_pb2.Person)
+            assert dest.name == "test"
+            assert any("test_internal" in r for r in remapped)
+        finally:
+            proto_converter.set_module_resolver(None)
+
+
+# ---------------------------------------------------------------------------
+# Circular proto references
+# ---------------------------------------------------------------------------
+
+
+class TestCircularProtos:
+    def test_self_referential_message(self):
+        """TreeNode has repeated TreeNode children — must not infinite-recurse."""
+        src = api_pb2.TreeNode(
+            name="root",
+            children=[
+                api_pb2.TreeNode(name="child1"),
+                api_pb2.TreeNode(
+                    name="child2",
+                    children=[api_pb2.TreeNode(name="grandchild")],
+                ),
+            ],
+        )
+        dest = proto_converter.convert(src, internal_pb2.TreeNode)
+        assert dest.name == "root"
+        assert len(dest.children) == 2
+        assert dest.children[0].name == "child1"
+        assert dest.children[1].children[0].name == "grandchild"
+
+
 # ---------------------------------------------------------------------------
 # Error cases
 # ---------------------------------------------------------------------------

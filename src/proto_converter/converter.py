@@ -34,10 +34,9 @@ FieldDescriptor = descriptor_mod.FieldDescriptor
 
 _registry: dict[tuple[type[message.Message], type[message.Message]], ProtoConverter[Any, Any]] = {}
 
-# User-installable hook for resolving a protobuf Descriptor to its Python class.
-# If set, called before the default importlib-based resolution. Should return None
-# to fall through to the default.
+# User-installable hooks for type resolution.
 _type_resolver: Callable[[descriptor_mod.Descriptor], type[message.Message] | None] | None = None
+_module_resolver: Callable[[str], str | None] | None = None
 
 
 def set_type_resolver(
@@ -49,10 +48,36 @@ def set_type_resolver(
     return the corresponding Python message class, or ``None`` to fall through to the
     default import-based resolution.
 
+    This is the general escape hatch. For the common case of remapping package prefixes,
+    see :func:`set_module_resolver`.
+
     Pass ``None`` to remove a previously installed resolver.
     """
     global _type_resolver
     _type_resolver = resolver
+
+
+def set_module_resolver(
+    resolver: Callable[[str], str | None] | None,
+) -> None:
+    """Install a hook that remaps the Python module path before import.
+
+    The resolver receives the fully-qualified module path (e.g.
+    ``"mycompany.v1.messages_pb2"``) and should return a replacement path, or ``None``
+    to use the original. This is the easy way to handle projects where the proto package
+    doesn't match the Python package::
+
+        def resolver(module_path: str) -> str | None:
+            if module_path.startswith("ultravox."):
+                return f"ultravox_proto.{module_path}"
+            return None
+
+        proto_converter.set_module_resolver(resolver)
+
+    Pass ``None`` to remove a previously installed resolver.
+    """
+    global _module_resolver
+    _module_resolver = resolver
 
 
 def _descriptor_to_type(desc: descriptor_mod.Descriptor) -> type[message.Message]:
@@ -84,6 +109,8 @@ def _descriptor_to_type(desc: descriptor_mod.Descriptor) -> type[message.Message
 
     try:
         qualified = f"{package_name}.{module_name}" if package_name else module_name
+        if _module_resolver is not None:
+            qualified = _module_resolver(qualified) or qualified
         mod = importlib.import_module(qualified)
         clazz = getattr(mod, top_class_name)
         for nesting in class_nesting:
@@ -519,13 +546,49 @@ def _make_field_converter(
 # ---------------------------------------------------------------------------
 
 
+class _DeferredConverter(Generic[F, T]):
+    """Lazy proxy returned when a converter is requested during its own construction.
+
+    This breaks circular references (e.g. ``TreeNode`` containing ``repeated TreeNode``).
+    The real converter will be in the registry by the time ``convert()`` is called.
+    """
+
+    def __init__(self, pb_class_from: type[F], pb_class_to: type[T]) -> None:
+        self._key = (pb_class_from, pb_class_to)
+
+    def convert(self, src: F) -> T:
+        real = _registry.get(self._key)
+        if real is None or isinstance(real, _DeferredConverter):
+            raise RuntimeError(f"Circular converter for {self._key} was never fully constructed")
+        return real.convert(src)
+
+
+class _BuildingSentinel:
+    """Singleton inserted into _registry during construction to detect re-entrancy."""
+
+
+_BUILDING = _BuildingSentinel()
+
+
 def get_converter(pb_class_from: type[F], pb_class_to: type[T]) -> ProtoConverter[F, T]:
     """Look up or create a converter between two proto types."""
-    if (pb_class_from, pb_class_to) not in _registry:
-        _registry[(pb_class_from, pb_class_to)] = ProtoConverter(
-            pb_class_from=pb_class_from, pb_class_to=pb_class_to
-        )
-    return _registry[(pb_class_from, pb_class_to)]
+    key = (pb_class_from, pb_class_to)
+    existing = _registry.get(key)
+    if existing is not None:
+        if isinstance(existing, _BuildingSentinel):
+            # We're in the middle of building this converter (circular proto reference).
+            # Return a deferred proxy that will resolve at convert-time.
+            return _DeferredConverter(pb_class_from, pb_class_to)  # type: ignore[return-value]
+        return existing
+    # Insert sentinel before construction to break circular references.
+    _registry[key] = _BUILDING  # type: ignore[assignment]
+    try:
+        converter = ProtoConverter(pb_class_from=pb_class_from, pb_class_to=pb_class_to)
+    except Exception:
+        _registry.pop(key, None)
+        raise
+    _registry[key] = converter
+    return converter
 
 
 def convert(src: message.Message, to_type: type[T]) -> T:

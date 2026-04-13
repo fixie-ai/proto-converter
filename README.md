@@ -71,20 +71,25 @@ at runtime — so missing fields are caught early.
 
 The recursive converter needs to map protobuf `Descriptor` objects back to Python
 classes. By default it uses `importlib`, assuming the proto package maps directly
-to a Python package. If your generated code lives under a different prefix,
-install a resolver:
+to a Python package. If your generated code lives under a different prefix, use
+`set_module_resolver` to remap the import path:
 
 ```python
 import proto_converter
 
-def my_resolver(descriptor):
-    if descriptor.full_name.startswith("mycompany."):
-        # Remap to the actual Python package
-        ...
-    return None  # fall through to default resolution
+def resolver(module_path: str) -> str | None:
+    if module_path.startswith("ultravox."):
+        return f"ultravox_proto.{module_path}"
+    if module_path.startswith("fixie."):
+        return f"fixie_proto_internal.{module_path}"
+    return None  # use the original path
 
-proto_converter.set_type_resolver(my_resolver)
+proto_converter.set_module_resolver(resolver)
 ```
+
+For full control over type resolution (e.g. when you need to intercept at the
+`Descriptor` level), use `set_type_resolver` instead — it receives a protobuf
+`Descriptor` and returns a Python class directly.
 
 ## Development
 

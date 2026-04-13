@@ -62,6 +62,11 @@ message IncompatibleEnumMessage {
   IncompatiblePriority priority = 2;
 }
 
+message TreeNode {
+  string name = 1;
+  repeated TreeNode children = 2;
+}
+
 message InternalDetail {
   string info = 1;
   int32 priority = 2;

@@ -4,6 +4,7 @@ from proto_converter.converter import ProtoConverter
 from proto_converter.converter import convert
 from proto_converter.converter import convert_field
 from proto_converter.converter import get_converter
+from proto_converter.converter import set_module_resolver
 from proto_converter.converter import set_type_resolver
 
 __all__ = [
@@ -11,5 +12,6 @@ __all__ = [
     "convert",
     "convert_field",
     "get_converter",
+    "set_module_resolver",
     "set_type_resolver",
 ]
