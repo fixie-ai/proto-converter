@@ -558,7 +558,7 @@ class _DeferredConverter(Generic[F, T]):
 
     def convert(self, src: F) -> T:
         real = _registry.get(self._key)
-        if real is None or isinstance(real, _DeferredConverter):
+        if not isinstance(real, ProtoConverter):
             raise RuntimeError(f"Circular converter for {self._key} was never fully constructed")
         return real.convert(src)
 
