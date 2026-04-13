@@ -65,6 +65,7 @@ message IncompatibleEnumMessage {
 message TreeNode {
   string name = 1;
   repeated TreeNode children = 2;
+  string internal_note = 3;
 }
 
 message InternalDetail {

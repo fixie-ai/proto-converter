@@ -301,7 +301,8 @@ class ProtoConverter(Generic[F, T]):
             # type parameters get registered.
             return
 
-        if (pb_class_from, pb_class_to) in _registry:
+        key = (pb_class_from, pb_class_to)
+        if key in _registry:
             raise RuntimeError(f"Already have a converter from {pb_class_from} to {pb_class_to}")
         logger.debug(
             "Registering %s as converter from %s to %s",
@@ -309,9 +310,16 @@ class ProtoConverter(Generic[F, T]):
             pb_class_from,
             pb_class_to,
         )
-        _registry[(pb_class_from, pb_class_to)] = cls(
-            pb_class_from, pb_class_to, cls.IGNORED_FIELDS
-        )
+        # Insert sentinel before construction so recursive get_converter calls
+        # (from circular proto references) return a _DeferredConverter instead
+        # of creating a plain ProtoConverter that lacks this subclass's
+        # IGNORED_FIELDS / @convert_field methods.
+        _registry[key] = _BUILDING  # type: ignore[assignment]
+        try:
+            _registry[key] = cls(pb_class_from, pb_class_to, cls.IGNORED_FIELDS)
+        except Exception:
+            _registry.pop(key, None)
+            raise
 
     # ------------------------------------------------------------------
     # Validation

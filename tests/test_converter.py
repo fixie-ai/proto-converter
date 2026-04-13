@@ -298,8 +298,8 @@ class TestModuleResolver:
 
 
 class TestCircularProtos:
-    def test_self_referential_message(self):
-        """TreeNode has repeated TreeNode children — must not infinite-recurse."""
+    def test_self_referential_auto(self):
+        """api TreeNode -> internal TreeNode with auto-created converter."""
         src = api_pb2.TreeNode(
             name="root",
             children=[
@@ -315,6 +315,29 @@ class TestCircularProtos:
         assert len(dest.children) == 2
         assert dest.children[0].name == "child1"
         assert dest.children[1].children[0].name == "grandchild"
+
+    def test_self_referential_with_ignored_fields(self):
+        """internal TreeNode -> api TreeNode requires IGNORED_FIELDS for internal_note.
+
+        The recursive children field must use the same subclass converter (with
+        IGNORED_FIELDS), not a plain ProtoConverter that would fail validation.
+        """
+
+        class TreeConverter(
+            proto_converter.ProtoConverter[internal_pb2.TreeNode, api_pb2.TreeNode]
+        ):
+            IGNORED_FIELDS = ["internal_note"]
+
+        src = internal_pb2.TreeNode(
+            name="root",
+            internal_note="secret",
+            children=[
+                internal_pb2.TreeNode(name="child", internal_note="also secret"),
+            ],
+        )
+        dest = proto_converter.convert(src, api_pb2.TreeNode)
+        assert dest.name == "root"
+        assert dest.children[0].name == "child"
 
 
 # ---------------------------------------------------------------------------
