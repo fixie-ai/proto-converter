@@ -12,11 +12,14 @@ mkdir -p "$OUT_DIR"
 uv run python -m grpc_tools.protoc \
     -I "$SCRIPT_DIR/protos" \
     --python_out="$OUT_DIR" \
+    --pyi_out="$OUT_DIR" \
     "$SCRIPT_DIR/protos/test_api/api.proto" \
     "$SCRIPT_DIR/protos/test_internal/internal.proto"
 
 # Create __init__.py files so the generated packages are importable.
 touch "$OUT_DIR/test_api/__init__.py"
 touch "$OUT_DIR/test_internal/__init__.py"
+
+uv sync --reinstall-package test-protos
 
 echo "Generated proto files in $OUT_DIR"
