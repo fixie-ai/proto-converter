@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package test_api;
+
+import "google/protobuf/struct.proto";
+
+message Address {
+  string street = 1;
+  string city = 2;
+}
+
+message Person {
+  string name = 1;
+  int32 age = 2;
+  Address address = 3;
+  repeated string tags = 4;
+  map<string, string> metadata = 5;
+  repeated Address other_addresses = 6;
+  map<string, Address> named_addresses = 7;
+  google.protobuf.Struct extra = 8;
+}
+
+message SimpleMessage {
+  string text = 1;
+  int32 number = 2;
+}
+
+message OneofMessage {
+  string name = 1;
+  oneof value {
+    string str_value = 2;
+    int32 int_value = 3;
+  }
+}
+
+message ApiDetail {
+  string info = 1;
+  int32 priority = 2;
+}
+
+message DifferentNested {
+  string label = 1;
+  ApiDetail detail = 2;
+  repeated ApiDetail details = 3;
+  map<string, ApiDetail> named_details = 4;
+}

@@ -1,3 +1,6 @@
+# Generated proto files (re-generate with: see tests/protos/)
+tests/gen/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package test_internal;
+
+import "google/protobuf/struct.proto";
+
+message Address {
+  string street = 1;
+  string city = 2;
+}
+
+message Person {
+  string name = 1;
+  int32 age = 2;
+  Address address = 3;
+  repeated string tags = 4;
+  map<string, string> metadata = 5;
+  repeated Address other_addresses = 6;
+  map<string, Address> named_addresses = 7;
+  google.protobuf.Struct extra = 8;
+
+  // Internal-only fields.
+  string internal_id = 100;
+  int64 created_at = 101;
+}
+
+message SimpleMessage {
+  string text = 1;
+  int32 number = 2;
+}
+
+message OneofMessage {
+  string name = 1;
+  oneof value {
+    string str_value = 2;
+    int32 int_value = 3;
+  }
+}
+
+message InternalDetail {
+  string info = 1;
+  int32 priority = 2;
+  string internal_note = 3;
+}
+
+message DifferentNested {
+  string label = 1;
+  InternalDetail detail = 2;
+  repeated InternalDetail details = 3;
+  map<string, InternalDetail> named_details = 4;
+}
