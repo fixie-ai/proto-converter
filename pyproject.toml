@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 dependencies = ["protobuf>=4.21.0"]
 
 [dependency-groups]
-dev = ["pytest>=8.0", "grpcio-tools>=1.60.0", "mypy-protobuf>=3.0", "ruff>=0.4.0", "test-protos"]
+dev = ["pytest>=8.0", "grpcio-tools>=1.60.0", "mypy-protobuf>=3.0", "pyright>=1.1", "ruff>=0.4.0", "test-protos"]
 
 [tool.uv.sources]
 test-protos = { path = "tests/test_protos", editable = true }
@@ -22,6 +22,7 @@ testpaths = ["tests"]
 
 [tool.pyright]
 extraPaths = ["tests/test_protos/src"]
+include = ["src", "tests/test_converter.py"]
 
 [tool.ruff]
 line-length = 100

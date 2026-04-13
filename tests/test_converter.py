@@ -233,7 +233,7 @@ class TestErrors:
     def test_type_mismatch(self):
         converter = proto_converter.get_converter(api_pb2.SimpleMessage, internal_pb2.SimpleMessage)
         with pytest.raises(TypeError, match="doesn't match"):
-            converter.convert(api_pb2.Person(name="wrong type"))
+            converter.convert(api_pb2.Person(name="wrong type"))  # pyright: ignore[reportArgumentType]
 
     def test_duplicate_registration(self):
         class First(

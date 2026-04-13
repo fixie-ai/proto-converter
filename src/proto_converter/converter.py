@@ -8,10 +8,13 @@ Nested message fields with different types are auto-converted if a converter exi
 (or can be trivially created) for those types.
 """
 
+from __future__ import annotations
+
 import functools
 import importlib
 import logging
-from typing import Callable, Generic, TypeVar
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Generic, TypeVar
 
 from google.protobuf import any_pb2, message, symbol_database
 from google.protobuf import descriptor as descriptor_mod
@@ -23,7 +26,7 @@ T = TypeVar("T", bound=message.Message)
 
 FieldDescriptor = descriptor_mod.FieldDescriptor
 
-_registry: dict[tuple[type[message.Message], type[message.Message]], "ProtoConverter"] = {}  # type: ignore[type-arg]
+_registry: dict[tuple[type[message.Message], type[message.Message]], ProtoConverter[Any, Any]] = {}
 
 # User-installable hook for resolving a protobuf Descriptor to its Python class.
 # If set, called before the default importlib-based resolution. Should return None
@@ -94,17 +97,19 @@ def _is_any_field(field: FieldDescriptor) -> bool:
 
 
 def _is_map_field(field: FieldDescriptor) -> bool:
+    mt = field.message_type
     return (
         field.is_repeated
         and field.type == FieldDescriptor.TYPE_MESSAGE
-        and field.message_type.has_options
-        and field.message_type.GetOptions().map_entry
+        and mt is not None
+        and mt.has_options
+        and mt.GetOptions().map_entry
     )
 
 
 def _is_src_field_auto_convertible(
     src_field: FieldDescriptor,
-    dest_fields_by_name: dict[str, FieldDescriptor],
+    dest_fields_by_name: Mapping[str, FieldDescriptor],
 ) -> bool:
     """Check whether a source field can be copied to the destination without custom logic."""
     if src_field.name not in dest_fields_by_name:
@@ -116,6 +121,8 @@ def _is_src_field_auto_convertible(
         return False
 
     if _is_map_field(src_field):
+        assert src_field.message_type is not None
+        assert dest_field.message_type is not None
         src_map = src_field.message_type.fields_by_name
         dest_map = dest_field.message_type.fields_by_name
         return _is_src_field_auto_convertible(
@@ -172,7 +179,7 @@ def _validate_oneof_multi_mapping(
 # ---------------------------------------------------------------------------
 
 
-def convert_field(field_names: list[str] | None = None):
+def convert_field(field_names: list[str] | None = None) -> Callable[[Callable], Callable]:
     """Decorator marking a method as a custom field converter.
 
     Usage::
@@ -189,7 +196,7 @@ def convert_field(field_names: list[str] | None = None):
         fn.convert_field_names = field_names  # type: ignore[attr-defined]
 
         @functools.wraps(fn)
-        def wrapper(self, src_proto, dest_proto):  # type: ignore[no-untyped-def]
+        def wrapper(self: Any, src_proto: Any, dest_proto: Any) -> None:
             fn(self, src_proto, dest_proto)
 
         return wrapper
@@ -229,7 +236,7 @@ class ProtoConverter(Generic[F, T]):
         self._pb_class_to = pb_class_to
         self._field_names_to_ignore = list(field_names_to_ignore or [])
         self._function_convert_field_names: list[str] = []
-        self._convert_functions: list[Callable] = []
+        self._convert_functions: list[Callable[..., None]] = []
         self._unconverted_fields: list[str] = []
 
         self._validate_fields()
@@ -270,14 +277,17 @@ class ProtoConverter(Generic[F, T]):
         for entry in dir(self.__class__):
             obj = getattr(self.__class__, entry)
             if callable(obj) and hasattr(obj, "convert_field_names"):
-                self._convert_functions.append(obj)
-                self._function_convert_field_names.extend(obj.convert_field_names)
+                self._convert_functions.append(obj)  # pyright: ignore[reportArgumentType]
+                self._function_convert_field_names.extend(
+                    obj.convert_field_names  # pyright: ignore[reportFunctionMemberAccess]
+                )
 
         src_fields = self._pb_class_from.DESCRIPTOR.fields
         dest_fields_by_name = self._pb_class_to.DESCRIPTOR.fields_by_name
 
+        # pyright: ignore — protobuf stubs union two FieldDescriptor implementations
         self._unconverted_fields = self._get_unhandled_fields(
-            src_fields, dest_fields_by_name, self._field_names_to_ignore
+            src_fields, dest_fields_by_name, self._field_names_to_ignore  # pyright: ignore[reportArgumentType]
         )
 
         if self._pb_class_from.DESCRIPTOR.oneofs:
@@ -302,8 +312,8 @@ class ProtoConverter(Generic[F, T]):
 
     def _get_unhandled_fields(
         self,
-        src_fields: list[FieldDescriptor],
-        dest_fields_by_name: dict[str, FieldDescriptor],
+        src_fields: Sequence[FieldDescriptor],
+        dest_fields_by_name: Mapping[str, FieldDescriptor],
         ignored: list[str],
     ) -> list[str]:
         """Determine which source fields need explicit handling.
@@ -327,11 +337,15 @@ class ProtoConverter(Generic[F, T]):
 
             # Map<K, SrcMsg> -> Map<K, DestMsg> via recursive converter.
             if _is_map_field(field) and _is_map_field(dest_field):
+                assert field.message_type is not None
+                assert dest_field.message_type is not None
                 src_map = field.message_type.fields_by_name
                 dest_map = dest_field.message_type.fields_by_name
                 if _is_src_field_auto_convertible(src_map["key"], dest_map):
                     if _is_src_field_auto_convertible(src_map["value"], dest_map):
                         continue
+                    assert src_map["value"].message_type is not None
+                    assert dest_map["value"].message_type is not None
                     value_conv = get_converter(
                         _descriptor_to_type(src_map["value"].message_type),
                         _descriptor_to_type(dest_map["value"].message_type),
@@ -346,6 +360,8 @@ class ProtoConverter(Generic[F, T]):
                 field.type == FieldDescriptor.TYPE_MESSAGE
                 and dest_field.type == FieldDescriptor.TYPE_MESSAGE
             ):
+                assert field.message_type is not None
+                assert dest_field.message_type is not None
                 field_conv = get_converter(
                     _descriptor_to_type(field.message_type),
                     _descriptor_to_type(dest_field.message_type),
@@ -379,18 +395,22 @@ class ProtoConverter(Generic[F, T]):
 
     def _auto_convert(self, src: message.Message, dest: message.Message) -> None:
         """Copy all auto-convertible fields from *src* to *dest*."""
-        for src_fd, src_value in src.ListFields():
+        for _src_fd, src_value in src.ListFields():
+            # Protobuf stubs union two FieldDescriptor implementations; cast to the public one.
+            src_fd: FieldDescriptor = _src_fd  # type: ignore[assignment]
             if (
                 src_fd.name in self._field_names_to_ignore
                 or src_fd.name in self._unconverted_fields
             ):
                 continue
 
-            dest_fd = dest.DESCRIPTOR.fields_by_name[src_fd.name]
+            dest_fd: FieldDescriptor = dest.DESCRIPTOR.fields_by_name[src_fd.name]  # type: ignore[assignment]
             dest_value = getattr(dest, src_fd.name)
 
             # Map fields
             if _is_map_field(src_fd):
+                assert src_fd.message_type is not None
+                assert dest_fd.message_type is not None
                 src_map_value_fd = src_fd.message_type.fields_by_name["value"]
                 dest_map_value_fd = dest_fd.message_type.fields_by_name["value"]
                 if _is_any_field(dest_map_value_fd) and not _is_any_field(src_map_value_fd):
@@ -405,8 +425,8 @@ class ProtoConverter(Generic[F, T]):
                     factory = symbol_database.Default()
                     for item in src_value:
                         type_name = item.TypeName()
-                        proto_desc = factory.pool.FindMessageTypeByName(type_name)
-                        proto_class = factory.GetPrototype(proto_desc)
+                        proto_desc = factory.pool.FindMessageTypeByName(type_name)  # pyright: ignore[reportAttributeAccessIssue]
+                        proto_class = factory.GetPrototype(proto_desc)  # pyright: ignore[reportAttributeAccessIssue]
                         proto_obj = proto_class()
                         item.Unpack(proto_obj)
                         dest_value.add().Pack(proto_obj)
@@ -437,9 +457,11 @@ class ProtoConverter(Generic[F, T]):
 
 def _make_map_converter(
     field: FieldDescriptor,
-    value_converter: ProtoConverter,  # type: ignore[type-arg]
-) -> Callable:
-    def convert_map(_self: ProtoConverter, src: message.Message, dest: message.Message) -> None:  # type: ignore[type-arg]
+    value_converter: ProtoConverter[Any, Any],
+) -> Callable[..., None]:
+    def convert_map(
+        _self: ProtoConverter[Any, Any], src: message.Message, dest: message.Message
+    ) -> None:
         for k, v in getattr(src, field.name).items():
             getattr(dest, field.name)[k].CopyFrom(value_converter.convert(v))
 
@@ -448,9 +470,11 @@ def _make_map_converter(
 
 def _make_field_converter(
     field: FieldDescriptor,
-    field_converter: ProtoConverter,  # type: ignore[type-arg]
-) -> Callable:
-    def convert_field(_self: ProtoConverter, src: message.Message, dest: message.Message) -> None:  # type: ignore[type-arg]
+    field_converter: ProtoConverter[Any, Any],
+) -> Callable[..., None]:
+    def convert_field(
+        _self: ProtoConverter[Any, Any], src: message.Message, dest: message.Message
+    ) -> None:
         if field.is_repeated:
             src_value = getattr(src, field.name)
             dest_value = getattr(dest, field.name)
