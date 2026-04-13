@@ -13,6 +13,7 @@ dependencies = ["protobuf>=4.21.0"]
 
 [dependency-groups]
 dev = [
+    "deptry>=0.22.0",
     "grpcio-tools>=1.60.0",
     "mypy-protobuf>=3.0",
     "pyright>=1.1",

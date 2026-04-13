@@ -5,11 +5,12 @@ format:
     uv run ruff format
     uv run ruff check --fix-only
 
-# Run all checks (lint, type check)
+# Run all checks (lint, type check, dependency audit)
 check:
     uv run ruff format --check
     uv run ruff check
     uv run pyright
+    uv run deptry src
 
 # Run tests
 test *ARGS=".":
