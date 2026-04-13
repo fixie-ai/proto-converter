@@ -169,9 +169,9 @@ def _validate_oneof_multi_mapping(
     """Raise if a oneof in src maps to multiple distinct oneofs/fields in dest."""
     ignored_set = set(ignored_fields)
     dest_field_to_oneof: dict[str, str] = {}
-    for name, oneof in dest_pb.DESCRIPTOR.oneofs_by_name.items():
+    for oneof in dest_pb.DESCRIPTOR.oneofs_by_name.values():
         for field in oneof.fields:
-            dest_field_to_oneof[field.name] = name
+            dest_field_to_oneof[field.name] = oneof.name
     dest_field_names = set(dest_pb.DESCRIPTOR.fields_by_name.keys())
 
     for src_oneof_name, src_oneof in src_pb.DESCRIPTOR.oneofs_by_name.items():
@@ -304,7 +304,7 @@ class ProtoConverter(Generic[F, T]):
         src_fields: Sequence[FieldDescriptor] = self._pb_class_from.DESCRIPTOR.fields  # type: ignore[assignment]
         dest_by_name: Mapping[str, FieldDescriptor] = self._pb_class_to.DESCRIPTOR.fields_by_name  # type: ignore[assignment]
 
-        self._unconverted_fields = self._get_unhandled_fields(
+        self._unconverted_fields = self._register_recursive_converters(
             src_fields,
             dest_by_name,
             self._field_names_to_ignore,
@@ -330,16 +330,18 @@ class ProtoConverter(Generic[F, T]):
                 f"Source has fields: {src_names}.\nDestination has fields: {dest_names}."
             )
 
-    def _get_unhandled_fields(
+    def _register_recursive_converters(
         self,
         src_fields: Sequence[FieldDescriptor],
         dest_fields_by_name: Mapping[str, FieldDescriptor],
         ignored: list[str],
     ) -> list[str]:
-        """Determine which source fields need explicit handling.
+        """Register converters for nested message fields and return unhandled field names.
 
-        Extends the basic same-name/same-type check with recursive converter
-        lookup for message fields whose types differ.
+        For each source field that can't be auto-converted, tries to find or create a
+        converter for the nested message types. Successfully resolved fields are added
+        to ``self._convert_functions`` and ``self._field_names_to_ignore``; the rest are
+        returned as unhandled.
         """
         unhandled: list[str] = []
         for field in src_fields:
@@ -374,6 +376,7 @@ class ProtoConverter(Generic[F, T]):
                         self._function_convert_field_names.append(field.name)
                         self._field_names_to_ignore.append(field.name)
                         self._convert_functions.append(_make_map_converter(field, value_conv))
+                        continue
 
             # SrcMsg -> DestMsg (singular or repeated) via recursive converter.
             elif (
@@ -414,7 +417,13 @@ class ProtoConverter(Generic[F, T]):
         return dest
 
     def _auto_convert(self, src: message.Message, dest: message.Message) -> None:
-        """Copy all auto-convertible fields from *src* to *dest*."""
+        """Copy all auto-convertible fields from *src* to *dest*.
+
+        Uses ``ListFields()`` which only yields fields with non-default values.
+        This means proto3 fields explicitly set to their default (e.g. ``number = 0``)
+        won't be copied — standard proto3 semantics, but worth noting for anyone
+        migrating from a hand-written converter that does ``dest.x = src.x``.
+        """
         for _src_fd, src_value in src.ListFields():
             # Protobuf stubs union two FieldDescriptor implementations; cast to the public one.
             src_fd: FieldDescriptor = _src_fd  # type: ignore[assignment]

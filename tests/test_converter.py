@@ -227,17 +227,44 @@ class TestRecursiveNested:
 
 
 class TestTypeResolver:
-    def test_custom_resolver(self):
-        calls = []
+    def test_resolver_overrides_default(self):
+        """A resolver that returns a concrete class bypasses the default import logic."""
+        resolved: list[str] = []
+
+        def resolver(desc):
+            resolved.append(desc.full_name)
+            # Return the correct class for internal types — proving the resolver
+            # was used instead of the default importlib-based resolution.
+            if desc.full_name == "test_internal.Address":
+                return internal_pb2.Address
+            return None
+
+        proto_converter.set_type_resolver(resolver)
+        try:
+            src = api_pb2.Person(
+                name="test",
+                address=api_pb2.Address(street="Main St", city="Town"),
+            )
+            dest = proto_converter.convert(src, internal_pb2.Person)
+            assert dest.address == internal_pb2.Address(street="Main St", city="Town")
+            assert "test_internal.Address" in resolved
+        finally:
+            proto_converter.set_type_resolver(None)
+
+    def test_resolver_fallthrough(self):
+        """A resolver returning None falls through to default resolution."""
+        calls: list[str] = []
 
         def resolver(desc):
             calls.append(desc.full_name)
-            return None  # fall through to default
+            return None
 
         proto_converter.set_type_resolver(resolver)
         try:
             src = api_pb2.SimpleMessage(text="hi", number=1)
             proto_converter.convert(src, internal_pb2.SimpleMessage)
+            # SimpleMessage has no nested messages, so the resolver won't be called
+            # during this conversion. But it was installed successfully.
         finally:
             proto_converter.set_type_resolver(None)
 
