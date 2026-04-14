@@ -1,4 +1,5 @@
 import pytest
+from google.protobuf import any_pb2
 from google.protobuf import struct_pb2
 from test_api import api_pb2
 from test_internal import internal_pb2
@@ -87,6 +88,44 @@ class TestAutoConvert:
         src = api_pb2.SimpleMessage()
         dest = proto_converter.convert(src, internal_pb2.SimpleMessage)
         assert dest == internal_pb2.SimpleMessage()
+
+    def test_any_singular(self):
+        """Singular Any field is copied between matching Any fields."""
+        inner = api_pb2.SimpleMessage(text="packed", number=7)
+        payload = any_pb2.Any()
+        payload.Pack(inner)
+        src = api_pb2.AnyHolder(payload=payload)
+
+        dest = proto_converter.convert(src, internal_pb2.AnyHolder)
+        unpacked = api_pb2.SimpleMessage()
+        dest.payload.Unpack(unpacked)
+        assert unpacked == inner
+
+    def test_any_repeated(self):
+        """Repeated Any fields are copied via MergeFrom."""
+        items = []
+        for i in range(3):
+            a = any_pb2.Any()
+            a.Pack(api_pb2.SimpleMessage(text=f"item{i}"))
+            items.append(a)
+        src = api_pb2.AnyHolder(items=items)
+
+        dest = proto_converter.convert(src, internal_pb2.AnyHolder)
+        assert len(dest.items) == 3
+        for i, item in enumerate(dest.items):
+            unpacked = api_pb2.SimpleMessage()
+            item.Unpack(unpacked)
+            assert unpacked.text == f"item{i}"
+
+    def test_nested_message_type(self):
+        """Messages defined inside another message (Outer.Inner) are resolved correctly."""
+        src = api_pb2.Outer(
+            nested=api_pb2.Outer.Inner(value="hello"),
+            label="test",
+        )
+        dest = proto_converter.convert(src, internal_pb2.Outer)
+        assert dest.label == "test"
+        assert dest.nested == internal_pb2.Outer.Inner(value="hello")
 
     def test_compatible_enum(self):
         """api Status {0,1,2} -> internal Status {0,1,2,3}: all source values exist in dest."""

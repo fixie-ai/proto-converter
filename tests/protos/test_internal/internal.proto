@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package test_internal;
 
+import "google/protobuf/any.proto";
 import "google/protobuf/struct.proto";
 
 message Address {
@@ -66,6 +67,19 @@ message TreeNode {
   string name = 1;
   repeated TreeNode children = 2;
   string internal_note = 3;
+}
+
+message AnyHolder {
+  google.protobuf.Any payload = 1;
+  repeated google.protobuf.Any items = 2;
+}
+
+message Outer {
+  message Inner {
+    string value = 1;
+  }
+  Inner nested = 1;
+  string label = 2;
 }
 
 message InternalDetail {

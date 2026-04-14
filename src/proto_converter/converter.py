@@ -23,7 +23,6 @@ from typing import TypeVar
 from google.protobuf import any_pb2
 from google.protobuf import descriptor as descriptor_mod
 from google.protobuf import message
-from google.protobuf import symbol_database
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +225,10 @@ def _validate_oneof_multi_mapping(
 def convert_field(field_names: list[str] | None = None) -> Callable[[Callable], Callable]:
     """Decorator marking a method as a custom field converter.
 
+    The handler runs after auto-conversion, so for fields that are already
+    auto-convertible (same name and type in both protos), the auto-converted value
+    will be overwritten by the handler.
+
     Usage::
 
         class MyConverter(ProtoConverter[SrcProto, DestProto]):
@@ -401,16 +404,20 @@ class ProtoConverter(Generic[F, T]):
                 assert dest_field.message_type is not None
                 src_map = field.message_type.fields_by_name
                 dest_map = dest_field.message_type.fields_by_name
-                if _is_src_field_auto_convertible(src_map["key"], dest_map):
-                    if _is_src_field_auto_convertible(src_map["value"], dest_map):
-                        continue
-                    assert src_map["value"].message_type is not None
-                    assert dest_map["value"].message_type is not None
-                    value_conv = get_converter(
-                        _descriptor_to_type(src_map["value"].message_type),
-                        _descriptor_to_type(dest_map["value"].message_type),
-                    )
-                    if value_conv:
+                if (
+                    _is_src_field_auto_convertible(src_map["key"], dest_map)
+                    and src_map["value"].type == FieldDescriptor.TYPE_MESSAGE
+                    and src_map["value"].message_type is not None
+                    and dest_map["value"].message_type is not None
+                ):
+                    try:
+                        value_conv = get_converter(
+                            _descriptor_to_type(src_map["value"].message_type),
+                            _descriptor_to_type(dest_map["value"].message_type),
+                        )
+                    except NotImplementedError:
+                        pass
+                    else:
                         self._function_convert_field_names.append(field.name)
                         self._field_names_to_ignore.append(field.name)
                         self._convert_functions.append(_make_map_converter(field, value_conv))
@@ -420,14 +427,17 @@ class ProtoConverter(Generic[F, T]):
             elif (
                 field.type == FieldDescriptor.TYPE_MESSAGE
                 and dest_field.type == FieldDescriptor.TYPE_MESSAGE
+                and field.message_type is not None
+                and dest_field.message_type is not None
             ):
-                assert field.message_type is not None
-                assert dest_field.message_type is not None
-                field_conv = get_converter(
-                    _descriptor_to_type(field.message_type),
-                    _descriptor_to_type(dest_field.message_type),
-                )
-                if field_conv:
+                try:
+                    field_conv = get_converter(
+                        _descriptor_to_type(field.message_type),
+                        _descriptor_to_type(dest_field.message_type),
+                    )
+                except NotImplementedError:
+                    pass
+                else:
                     self._function_convert_field_names.append(field.name)
                     self._field_names_to_ignore.append(field.name)
                     self._convert_functions.append(_make_field_converter(field, field_conv))
@@ -485,16 +495,7 @@ class ProtoConverter(Generic[F, T]):
 
             # Repeated fields
             elif src_fd.is_repeated:
-                if _is_any_field(src_fd):
-                    factory = symbol_database.Default()
-                    for item in src_value:
-                        type_name = item.TypeName()
-                        proto_desc = factory.pool.FindMessageTypeByName(type_name)  # pyright: ignore[reportAttributeAccessIssue]
-                        proto_class = factory.GetPrototype(proto_desc)  # pyright: ignore[reportAttributeAccessIssue]
-                        proto_obj = proto_class()
-                        item.Unpack(proto_obj)
-                        dest_value.add().Pack(proto_obj)
-                elif _is_any_field(dest_fd):
+                if _is_any_field(dest_fd) and not _is_any_field(src_fd):
                     for item in src_value:
                         any_proto = any_pb2.Any()
                         any_proto.Pack(item)
