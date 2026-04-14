@@ -91,6 +91,17 @@ For full control over type resolution (e.g. when you need to intercept at the
 `Descriptor` level), use `set_type_resolver` instead — it receives a protobuf
 `Descriptor` and returns a Python class directly.
 
+## Thread safety
+
+Converters are cached in a global registry. Once a converter for a given type pair
+has been created (typically at import time or on first use), `convert()` is a plain
+dict lookup followed by a stateless conversion — safe to call from any thread.
+
+However, converter *construction* (the first `convert()` call for a new type pair,
+or defining a `ProtoConverter` subclass) is not thread-safe. If this is a concern,
+create your converters at import time or during single-threaded startup rather than
+lazily from worker threads.
+
 ## Development
 
 ```bash
