@@ -1,4 +1,12 @@
+# Dump the Python stack trace on crashes.
+export PYTHONFAULTHANDLER := "1"
+
 default: format check test
+
+# Full set up (or update)
+install:
+    uv sync
+    just build-protos
 
 # Format code
 format:
@@ -19,8 +27,3 @@ test *ARGS=".":
 # Generate test proto files and install into venv
 build-protos:
     bash tests/gen_protos.sh
-
-# Full setup from scratch
-setup:
-    uv sync
-    just build-protos

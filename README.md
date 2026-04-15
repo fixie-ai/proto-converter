@@ -1,8 +1,8 @@
 # proto-converter
 
-Automatic deep conversion between compatible protocol buffer types, with no
-registration required for the common case. Inspired by
-[python-proto-converter](https://github.com/google/python-proto-converter).
+Automatic deep conversion between compatible protocol buffer types. Inspired by
+[python-proto-converter](https://github.com/google/python-proto-converter) but
+designed to require far less boilerplate.
 
 ## The problem
 
@@ -10,6 +10,13 @@ You have parallel proto hierarchies — say an internal schema and a public API
 schema — with messages that are structurally compatible (same field names and
 types) but generated as different Python classes. Converting between them by hand
 is tedious and breaks every time a field is added.
+
+The existing [python-proto-converter](https://github.com/google/python-proto-converter)
+helps with this, but still requires an explicit mapping for every relevant proto.
+Submessages are particularly cumbersome because they require their own converter
+*and* special handling in the containing converter. This `proto-converter` library
+does away with that requirement. As long as the submessages are also automatically
+convertible, no converters need to be defined at all.
 
 ## What this library does
 
@@ -24,7 +31,7 @@ Call `proto_converter.convert(msg, TargetType)` and it figures out the rest:
 
 When the types *aren't* fully compatible (extra fields, renamed fields, fields
 that need transformation), you register a converter subclass — but only for the
-specific type pair that differs, not for the whole tree.
+specific type pair that differs, not the whole tree.
 
 ## Installation
 
@@ -48,7 +55,7 @@ converter to tell the library what to do with them:
 ```python
 from proto_converter import ProtoConverter, convert_field
 
-class InternalToApi(ProtoConverter[internal_pb2.Person, api_pb2.Person]):
+class PersonConverter(ProtoConverter[internal_pb2.Person, api_pb2.Person]):
     # Fields that exist only in the source and can be dropped.
     IGNORED_FIELDS = ["internal_id", "created_at"]
 
@@ -65,7 +72,7 @@ conversion.
 
 Any field that can't be auto-converted and isn't handled by `IGNORED_FIELDS` or
 `@convert_field` raises `NotImplementedError` at converter construction time, not
-at runtime — so missing fields are caught early.
+during conversion — so missing fields are caught early.
 
 ## Custom type resolution
 
@@ -80,8 +87,6 @@ import proto_converter
 def resolver(module_path: str) -> str | None:
     if module_path.startswith("ultravox."):
         return f"ultravox_proto.{module_path}"
-    if module_path.startswith("fixie."):
-        return f"fixie_proto_internal.{module_path}"
     return None  # use the original path
 
 proto_converter.set_module_resolver(resolver)
@@ -91,11 +96,23 @@ For full control over type resolution (e.g. when you need to intercept at the
 `Descriptor` level), use `set_type_resolver` instead — it receives a protobuf
 `Descriptor` and returns a Python class directly.
 
+## Test recommendations
+
+For most projects, it is worthwhile to have tests converting between top-level
+messages. The tests may exercise any custom conversions registered. If there are
+no custom conversions, it's sufficient to test conversion of a default instance.
+This will catch the introduction of any fields that cannot be automatically
+converted since convertability is checked during converter construction.
+
+(Testing conversion explicitly is typically unhelpful given that the code using
+a converter has its own tests that invoke `convert` at some point.)
+
 ## Thread safety
 
 Converters are cached in a global registry. Once a converter for a given type pair
 has been created (typically at import time or on first use), `convert()` is a plain
-dict lookup followed by a stateless conversion — safe to call from any thread.
+dict lookup followed by a stateless conversion. It is thread-safe as long as any
+custom field conversions on the path are themselves thread-safe.
 
 However, converter *construction* (the first `convert()` call for a new type pair,
 or defining a `ProtoConverter` subclass) is not thread-safe. If this is a concern,
@@ -105,7 +122,7 @@ lazily from worker threads.
 ## Development
 
 ```bash
-just setup                       # install deps + generate test protos
+just install                     # install deps + generate test protos
 just                             # format, check, and test (the default)
 just test                        # just tests
 just check                       # lint + type check

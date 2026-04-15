@@ -1,6 +1,8 @@
 import pytest
 from google.protobuf import any_pb2
 from google.protobuf import struct_pb2
+from hamcrest import assert_that
+from proto_matcher import equals_proto
 from test_api import api_pb2
 from test_internal import internal_pb2
 
@@ -58,18 +60,21 @@ class TestAutoConvert:
         )
         dest = proto_converter.convert(src, internal_pb2.Person)
 
-        assert dest.name == "Alice"
-        assert dest.age == 30
-        assert dest.address == internal_pb2.Address(street="123 Main", city="Springfield")
-        assert list(dest.tags) == ["a", "b"]
-        assert dict(dest.metadata) == {"k": "v"}
-        assert list(dest.other_addresses) == [
-            internal_pb2.Address(street="456 Oak", city="Shelbyville"),
-        ]
-        assert dict(dest.named_addresses) == {
-            "work": internal_pb2.Address(street="789 Elm", city="Capital City"),
-        }
-        assert dest.extra == struct_pb2.Struct(fields={"x": struct_pb2.Value(string_value="y")})
+        expected = internal_pb2.Person(
+            name="Alice",
+            age=30,
+            address=internal_pb2.Address(street="123 Main", city="Springfield"),
+            tags=["a", "b"],
+            metadata={"k": "v"},
+            other_addresses=[
+                internal_pb2.Address(street="456 Oak", city="Shelbyville"),
+            ],
+            named_addresses={
+                "work": internal_pb2.Address(street="789 Elm", city="Capital City"),
+            },
+            extra=struct_pb2.Struct(fields={"x": struct_pb2.Value(string_value="y")}),
+        )
+        assert_that(dest, equals_proto(expected))
 
     def test_oneof_string(self):
         src = api_pb2.OneofMessage(name="test", str_value="hello")
@@ -81,6 +86,7 @@ class TestAutoConvert:
     def test_oneof_int(self):
         src = api_pb2.OneofMessage(name="test", int_value=99)
         dest = proto_converter.convert(src, internal_pb2.OneofMessage)
+        assert dest.name == "test"
         assert dest.int_value == 99
         assert dest.WhichOneof("value") == "int_value"
 
@@ -99,7 +105,7 @@ class TestAutoConvert:
         dest = proto_converter.convert(src, internal_pb2.AnyHolder)
         unpacked = api_pb2.SimpleMessage()
         dest.payload.Unpack(unpacked)
-        assert unpacked == inner
+        assert_that(unpacked, equals_proto(inner))
 
     def test_any_repeated(self):
         """Repeated Any fields are copied via MergeFrom."""
@@ -111,11 +117,9 @@ class TestAutoConvert:
         src = api_pb2.AnyHolder(items=items)
 
         dest = proto_converter.convert(src, internal_pb2.AnyHolder)
-        assert len(dest.items) == 3
-        for i, item in enumerate(dest.items):
-            unpacked = api_pb2.SimpleMessage()
-            item.Unpack(unpacked)
-            assert unpacked.text == f"item{i}"
+
+        expected = internal_pb2.AnyHolder(items=items)
+        assert_that(dest, equals_proto(expected))
 
     def test_nested_message_type(self):
         """Messages defined inside another message (Outer.Inner) are resolved correctly."""
@@ -165,8 +169,8 @@ class TestIgnoredFields:
 
         src = internal_pb2.Person(name="Bob", age=25, internal_id="secret", created_at=1234567890)
         dest = proto_converter.convert(src, api_pb2.Person)
-        assert dest.name == "Bob"
-        assert dest.age == 25
+        expected = api_pb2.Person(name="Bob", age=25)
+        assert_that(dest, equals_proto(expected))
 
 
 # ---------------------------------------------------------------------------
@@ -187,8 +191,8 @@ class TestConvertField:
 
         src = internal_pb2.Person(name="Carol", internal_id="id-123")
         dest = proto_converter.convert(src, api_pb2.Person)
-        assert dest.name == "Carol"
-        assert dest.metadata["original_id"] == "id-123"
+        expected = api_pb2.Person(name="Carol", metadata={"original_id": "id-123"})
+        assert_that(dest, equals_proto(expected))
 
 
 # ---------------------------------------------------------------------------
@@ -217,8 +221,10 @@ class TestRecursiveNested:
             detail=internal_pb2.InternalDetail(info="x", priority=1, internal_note="secret"),
         )
         dest = proto_converter.convert(src, api_pb2.DifferentNested)
-        assert dest.label == "test"
-        assert dest.detail == api_pb2.ApiDetail(info="x", priority=1)
+        expected = api_pb2.DifferentNested(
+            label="test", detail=api_pb2.ApiDetail(info="x", priority=1)
+        )
+        assert_that(dest, equals_proto(expected))
 
     def test_repeated_nested(self):
         src = internal_pb2.DifferentNested(
@@ -229,22 +235,32 @@ class TestRecursiveNested:
             ],
         )
         dest = proto_converter.convert(src, api_pb2.DifferentNested)
-        assert list(dest.details) == [
-            api_pb2.ApiDetail(info="a", priority=1),
-            api_pb2.ApiDetail(info="b", priority=2),
-        ]
+        expected = api_pb2.DifferentNested(
+            label="test",
+            details=[
+                api_pb2.ApiDetail(info="a", priority=1),
+                api_pb2.ApiDetail(info="b", priority=2),
+            ],
+        )
+        assert_that(dest, equals_proto(expected))
 
     def test_map_nested(self):
         src = internal_pb2.DifferentNested(
             label="test",
             named_details={
                 "first": internal_pb2.InternalDetail(info="a", priority=1, internal_note="n"),
+                "second": internal_pb2.InternalDetail(info="b", priority=2, internal_note="o"),
             },
         )
         dest = proto_converter.convert(src, api_pb2.DifferentNested)
-        assert dict(dest.named_details) == {
-            "first": api_pb2.ApiDetail(info="a", priority=1),
-        }
+        expected = api_pb2.DifferentNested(
+            label="test",
+            named_details={
+                "first": api_pb2.ApiDetail(info="a", priority=1),
+                "second": api_pb2.ApiDetail(info="b", priority=2),
+            },
+        )
+        assert_that(dest, equals_proto(expected))
 
     def test_roundtrip_nested(self):
         src = api_pb2.DifferentNested(
@@ -271,10 +287,10 @@ class TestTypeResolver:
         resolved: list[str] = []
 
         def resolver(desc):
-            resolved.append(desc.full_name)
-            # Return the correct class for internal types — proving the resolver
-            # was used instead of the default importlib-based resolution.
             if desc.full_name == "test_internal.Address":
+                # Return the same result (since its correct), but record the resolution to
+                # prove the resolver was called.
+                resolved.append(desc.full_name)
                 return internal_pb2.Address
             return None
 
@@ -292,10 +308,8 @@ class TestTypeResolver:
 
     def test_resolver_fallthrough(self):
         """A resolver returning None falls through to default resolution."""
-        calls: list[str] = []
 
         def resolver(desc):
-            calls.append(desc.full_name)
             return None
 
         proto_converter.set_type_resolver(resolver)
@@ -316,13 +330,14 @@ class TestModuleResolver:
         def resolver(module_path: str) -> str | None:
             # The test_internal proto package maps to test_internal.internal_pb2.
             # Remap it through an identity transformation to prove we control the path.
-            result = None
             if module_path.startswith("test_internal."):
                 # Return the same path — but this proves the resolver was called and
                 # its return value was used (if it returned garbage, import would fail).
-                result = module_path
-            remapped.append((module_path, result))
-            return result
+                remapped.append((module_path, module_path))
+                return module_path
+
+            remapped.append((module_path, None))
+            return None
 
         proto_converter.set_module_resolver(resolver)
         try:
@@ -360,10 +375,17 @@ class TestCircularProtos:
             ],
         )
         dest = proto_converter.convert(src, internal_pb2.TreeNode)
-        assert dest.name == "root"
-        assert len(dest.children) == 2
-        assert dest.children[0].name == "child1"
-        assert dest.children[1].children[0].name == "grandchild"
+        expected = internal_pb2.TreeNode(
+            name="root",
+            children=[
+                internal_pb2.TreeNode(name="child1"),
+                internal_pb2.TreeNode(
+                    name="child2",
+                    children=[internal_pb2.TreeNode(name="grandchild")],
+                ),
+            ],
+        )
+        assert_that(dest, equals_proto(expected))
 
     def test_self_referential_with_ignored_fields(self):
         """internal TreeNode -> api TreeNode requires IGNORED_FIELDS for internal_note.
@@ -385,8 +407,11 @@ class TestCircularProtos:
             ],
         )
         dest = proto_converter.convert(src, api_pb2.TreeNode)
-        assert dest.name == "root"
-        assert dest.children[0].name == "child"
+        expected = api_pb2.TreeNode(
+            name="root",
+            children=[api_pb2.TreeNode(name="child")],
+        )
+        assert_that(dest, equals_proto(expected))
 
 
 # ---------------------------------------------------------------------------

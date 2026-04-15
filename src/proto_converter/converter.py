@@ -16,9 +16,7 @@ import logging
 from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import Sequence
-from typing import Any
-from typing import Generic
-from typing import TypeVar
+from typing import Any, Generic, TypeVar, get_args, get_origin
 
 from google.protobuf import any_pb2
 from google.protobuf import descriptor as descriptor_mod
@@ -36,6 +34,45 @@ _registry: dict[tuple[type[message.Message], type[message.Message]], ProtoConver
 # User-installable hooks for type resolution.
 _type_resolver: Callable[[descriptor_mod.Descriptor], type[message.Message] | None] | None = None
 _module_resolver: Callable[[str], str | None] | None = None
+
+
+class _BuildingSentinel:
+    """Singleton inserted into _registry during construction to detect re-entrancy."""
+
+
+_BUILDING = _BuildingSentinel()
+
+
+def get_converter(pb_class_from: type[F], pb_class_to: type[T]) -> ProtoConverter[F, T]:
+    """Look up or create a converter between two proto types."""
+    key = (pb_class_from, pb_class_to)
+    existing = _registry.get(key)
+    if existing is not None:
+        if isinstance(existing, _BuildingSentinel):
+            # We're in the middle of building this converter (circular proto reference).
+            # Return a deferred proxy that will resolve at convert-time.
+            return _DeferredConverter(pb_class_from, pb_class_to)  # type: ignore[return-value]
+        return existing
+    # Insert sentinel before construction to break circular references.
+    _registry[key] = _BUILDING  # type: ignore[assignment]
+    try:
+        converter = ProtoConverter(pb_class_from=pb_class_from, pb_class_to=pb_class_to)
+    except Exception:
+        _registry.pop(key, None)
+        raise
+    _registry[key] = converter
+    return converter
+
+
+def convert(src: message.Message, to_type: type[T]) -> T:
+    """Convert a protobuf message to a different type.
+
+    This is the primary API. It looks up (or auto-creates) the appropriate
+    converter and invokes it::
+
+        api_msg = proto_converter.convert(internal_msg, api_pb2.MyMessage)
+    """
+    return get_converter(type(src), to_type).convert(src)
 
 
 def set_type_resolver(
@@ -77,144 +114,6 @@ def set_module_resolver(
     """
     global _module_resolver
     _module_resolver = resolver
-
-
-def _descriptor_to_type(desc: descriptor_mod.Descriptor) -> type[message.Message]:
-    """Resolve a protobuf Descriptor to its generated Python class."""
-    if _type_resolver is not None:
-        result = _type_resolver(desc)
-        if result is not None:
-            return result
-
-    # Walk up to the top-level message (handling nested types).
-    top_class_name = desc.name
-    class_nesting: list[str] = []
-    wrapper = desc.containing_type
-    while wrapper is not None:
-        class_nesting.insert(0, top_class_name)
-        top_class_name = wrapper.name
-        wrapper = wrapper.containing_type
-
-    # Build module path from the .proto file name.
-    module_name = desc.file.name
-    module_name = module_name.split("/")[-1] if "/" in module_name else module_name
-    module_name = module_name.replace(".proto", "_pb2")
-
-    # Build package path from the full proto name.
-    temp = desc
-    while temp.containing_type is not None:
-        temp = temp.containing_type
-    package_name = temp.full_name.rsplit(".", 1)[0] if "." in temp.full_name else ""
-
-    try:
-        qualified = f"{package_name}.{module_name}" if package_name else module_name
-        if _module_resolver is not None:
-            qualified = _module_resolver(qualified) or qualified
-        mod = importlib.import_module(qualified)
-        clazz = getattr(mod, top_class_name)
-        for nesting in class_nesting:
-            clazz = getattr(clazz, nesting)
-        return clazz
-    except Exception as e:
-        raise RuntimeError(f"Couldn't resolve type for {desc.full_name}") from e
-
-
-# ---------------------------------------------------------------------------
-# Field inspection helpers
-# ---------------------------------------------------------------------------
-
-
-def _is_any_field(field: FieldDescriptor) -> bool:
-    return field.message_type == any_pb2.DESCRIPTOR.message_types_by_name["Any"]
-
-
-def _is_map_field(field: FieldDescriptor) -> bool:
-    mt = field.message_type
-    return (
-        field.is_repeated
-        and field.type == FieldDescriptor.TYPE_MESSAGE
-        and mt is not None
-        and mt.has_options
-        and mt.GetOptions().map_entry
-    )
-
-
-def _is_src_field_auto_convertible(
-    src_field: FieldDescriptor,
-    dest_fields_by_name: Mapping[str, FieldDescriptor],
-) -> bool:
-    """Check whether a source field can be copied to the destination without custom logic."""
-    if src_field.name not in dest_fields_by_name:
-        return False
-
-    dest_field = dest_fields_by_name[src_field.name]
-
-    if dest_field.is_repeated != src_field.is_repeated or src_field.type != dest_field.type:
-        return False
-
-    if _is_map_field(src_field):
-        assert src_field.message_type is not None
-        assert dest_field.message_type is not None
-        src_map = src_field.message_type.fields_by_name
-        dest_map = dest_field.message_type.fields_by_name
-        return _is_src_field_auto_convertible(
-            src_map["key"], dest_map
-        ) and _is_src_field_auto_convertible(src_map["value"], dest_map)
-
-    if src_field.type == FieldDescriptor.TYPE_ENUM:
-        src_enum = src_field.enum_type
-        dest_enum = dest_field.enum_type
-        if src_enum == dest_enum:
-            return True
-        # Different enum types: auto-convertible if every source value number exists in dest.
-        if src_enum is not None and dest_enum is not None:
-            dest_numbers = {v.number for v in dest_enum.values}
-            return all(v.number in dest_numbers for v in src_enum.values)
-        return False
-
-    if src_field.type == FieldDescriptor.TYPE_MESSAGE:
-        if _is_any_field(src_field) and _is_any_field(dest_field):
-            return True
-        # Any -> Proto can't be validated statically.
-        if _is_any_field(src_field):
-            return False
-        # Proto -> Any is always valid.
-        if _is_any_field(dest_field):
-            return True
-        if src_field.message_type != dest_field.message_type:
-            return False
-
-    return True
-
-
-def _validate_oneof_multi_mapping(
-    src_pb: type[message.Message],
-    dest_pb: type[message.Message],
-    ignored_fields: list[str],
-) -> None:
-    """Raise if a oneof in src maps to multiple distinct oneofs/fields in dest."""
-    ignored_set = set(ignored_fields)
-    dest_field_to_oneof: dict[str, str] = {}
-    for oneof in dest_pb.DESCRIPTOR.oneofs_by_name.values():
-        for field in oneof.fields:
-            dest_field_to_oneof[field.name] = oneof.name
-    dest_field_names = set(dest_pb.DESCRIPTOR.fields_by_name.keys())
-
-    for src_oneof_name, src_oneof in src_pb.DESCRIPTOR.oneofs_by_name.items():
-        mapped: set[str] = set()
-        for field in src_oneof.fields:
-            if field.name in ignored_set:
-                continue
-            if field.name in dest_field_to_oneof:
-                mapped.add(dest_field_to_oneof[field.name])
-            elif field.name in dest_field_names:
-                mapped.add(field.name)
-        if len(mapped) > 1:
-            raise NotImplementedError(
-                f"Oneof field {src_oneof_name} in proto {src_pb.DESCRIPTOR.name} maps to "
-                f"more than one field; all fields in the oneof must be explicitly handled "
-                f"or ignored."
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -291,9 +190,6 @@ class ProtoConverter(Generic[F, T]):
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         # Extract generic type args from the class definition.
-        from typing import get_args
-        from typing import get_origin
-
         orig_bases = getattr(cls, "__orig_bases__", ())
         for base in orig_bases:
             if get_origin(base) is ProtoConverter:
@@ -515,9 +411,137 @@ class ProtoConverter(Generic[F, T]):
                 setattr(dest, src_fd.name, src_value)
 
 
-# ---------------------------------------------------------------------------
-# Synthetic converter helpers for recursive nested conversion
-# ---------------------------------------------------------------------------
+def _validate_oneof_multi_mapping(
+    src_pb: type[message.Message],
+    dest_pb: type[message.Message],
+    ignored_fields: list[str],
+) -> None:
+    """Raise if a oneof in src maps to multiple distinct oneofs/fields in dest."""
+    ignored_set = set(ignored_fields)
+    dest_field_to_oneof: dict[str, str] = {}
+    for oneof in dest_pb.DESCRIPTOR.oneofs_by_name.values():
+        for field in oneof.fields:
+            dest_field_to_oneof[field.name] = oneof.name
+    dest_field_names = set(dest_pb.DESCRIPTOR.fields_by_name.keys())
+
+    for src_oneof_name, src_oneof in src_pb.DESCRIPTOR.oneofs_by_name.items():
+        mapped: set[str] = set()
+        for field in src_oneof.fields:
+            if field.name in ignored_set:
+                continue
+            if field.name in dest_field_to_oneof:
+                mapped.add(dest_field_to_oneof[field.name])
+            elif field.name in dest_field_names:
+                mapped.add(field.name)
+        if len(mapped) > 1:
+            raise NotImplementedError(
+                f"Oneof field {src_oneof_name} in proto {src_pb.DESCRIPTOR.name} maps to "
+                f"more than one field; all fields in the oneof must be explicitly handled "
+                f"or ignored."
+            )
+
+
+def _descriptor_to_type(desc: descriptor_mod.Descriptor) -> type[message.Message]:
+    """Resolve a protobuf Descriptor to its generated Python class."""
+    if _type_resolver is not None:
+        result = _type_resolver(desc)
+        if result is not None:
+            return result
+
+    # Walk up to the top-level message (handling nested types).
+    top_class_name = desc.name
+    class_nesting: list[str] = []
+    wrapper = desc.containing_type
+    while wrapper is not None:
+        class_nesting.insert(0, top_class_name)
+        top_class_name = wrapper.name
+        wrapper = wrapper.containing_type
+
+    # Build module path from the .proto file name.
+    module_name = desc.file.name
+    module_name = module_name.split("/")[-1] if "/" in module_name else module_name
+    module_name = module_name.replace(".proto", "_pb2")
+
+    # Build package path from the full proto name.
+    temp = desc
+    while temp.containing_type is not None:
+        temp = temp.containing_type
+    package_name = temp.full_name.rsplit(".", 1)[0] if "." in temp.full_name else ""
+
+    try:
+        qualified = f"{package_name}.{module_name}" if package_name else module_name
+        if _module_resolver is not None:
+            qualified = _module_resolver(qualified) or qualified
+        mod = importlib.import_module(qualified)
+        clazz = getattr(mod, top_class_name)
+        for nesting in class_nesting:
+            clazz = getattr(clazz, nesting)
+        return clazz
+    except Exception as e:
+        raise RuntimeError(f"Couldn't resolve type for {desc.full_name}") from e
+
+
+def _is_src_field_auto_convertible(
+    src_field: FieldDescriptor,
+    dest_fields_by_name: Mapping[str, FieldDescriptor],
+) -> bool:
+    """Check whether a source field can be copied to the destination without custom logic."""
+    if src_field.name not in dest_fields_by_name:
+        return False
+
+    dest_field = dest_fields_by_name[src_field.name]
+
+    if dest_field.is_repeated != src_field.is_repeated or src_field.type != dest_field.type:
+        return False
+
+    if _is_map_field(src_field):
+        assert src_field.message_type is not None
+        assert dest_field.message_type is not None
+        src_map = src_field.message_type.fields_by_name
+        dest_map = dest_field.message_type.fields_by_name
+        return _is_src_field_auto_convertible(
+            src_map["key"], dest_map
+        ) and _is_src_field_auto_convertible(src_map["value"], dest_map)
+
+    if src_field.type == FieldDescriptor.TYPE_ENUM:
+        src_enum = src_field.enum_type
+        dest_enum = dest_field.enum_type
+        if src_enum == dest_enum:
+            return True
+        # Different enum types: auto-convertible if every source value number exists in dest.
+        if src_enum is not None and dest_enum is not None:
+            dest_numbers = {v.number for v in dest_enum.values}
+            return all(v.number in dest_numbers for v in src_enum.values)
+        return False
+
+    if src_field.type == FieldDescriptor.TYPE_MESSAGE:
+        if _is_any_field(src_field) and _is_any_field(dest_field):
+            return True
+        # Any -> Proto can't be validated statically.
+        if _is_any_field(src_field):
+            return False
+        # Proto -> Any is always valid.
+        if _is_any_field(dest_field):
+            return True
+        if src_field.message_type != dest_field.message_type:
+            return False
+
+    return True
+
+
+def _is_any_field(field: FieldDescriptor) -> bool:
+    return field.message_type == any_pb2.DESCRIPTOR.message_types_by_name["Any"]
+
+
+def _is_map_field(field: FieldDescriptor) -> bool:
+    mt = field.message_type
+    return (
+        field.is_repeated
+        and field.type == FieldDescriptor.TYPE_MESSAGE
+        and mt is not None
+        and mt.has_options
+        and mt.GetOptions().map_entry
+    )
 
 
 def _make_map_converter(
@@ -550,11 +574,6 @@ def _make_field_converter(
     return convert_field
 
 
-# ---------------------------------------------------------------------------
-# Public module-level API
-# ---------------------------------------------------------------------------
-
-
 class _DeferredConverter(Generic[F, T]):
     """Lazy proxy returned when a converter is requested during its own construction.
 
@@ -570,42 +589,3 @@ class _DeferredConverter(Generic[F, T]):
         if not isinstance(real, ProtoConverter):
             raise RuntimeError(f"Circular converter for {self._key} was never fully constructed")
         return real.convert(src)
-
-
-class _BuildingSentinel:
-    """Singleton inserted into _registry during construction to detect re-entrancy."""
-
-
-_BUILDING = _BuildingSentinel()
-
-
-def get_converter(pb_class_from: type[F], pb_class_to: type[T]) -> ProtoConverter[F, T]:
-    """Look up or create a converter between two proto types."""
-    key = (pb_class_from, pb_class_to)
-    existing = _registry.get(key)
-    if existing is not None:
-        if isinstance(existing, _BuildingSentinel):
-            # We're in the middle of building this converter (circular proto reference).
-            # Return a deferred proxy that will resolve at convert-time.
-            return _DeferredConverter(pb_class_from, pb_class_to)  # type: ignore[return-value]
-        return existing
-    # Insert sentinel before construction to break circular references.
-    _registry[key] = _BUILDING  # type: ignore[assignment]
-    try:
-        converter = ProtoConverter(pb_class_from=pb_class_from, pb_class_to=pb_class_to)
-    except Exception:
-        _registry.pop(key, None)
-        raise
-    _registry[key] = converter
-    return converter
-
-
-def convert(src: message.Message, to_type: type[T]) -> T:
-    """Convert a protobuf message to a different type.
-
-    This is the primary API. It looks up (or auto-creates) the appropriate
-    converter and invokes it::
-
-        api_msg = proto_converter.convert(internal_msg, api_pb2.MyMessage)
-    """
-    return get_converter(type(src), to_type).convert(src)
