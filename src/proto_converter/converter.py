@@ -135,6 +135,10 @@ def convert_field(field_names: list[str] | None = None) -> Callable[[Callable], 
     """
     if callable(field_names):
         raise TypeError("convert_field() must be called with parentheses: @convert_field([...])")
+    if isinstance(field_names, str):
+        raise TypeError(
+            "field_names must be a list of strings, not a string. Use @convert_field([...])."
+        )
     if field_names is None:
         field_names = []
 
@@ -203,7 +207,12 @@ class ProtoConverter(Generic[F, T]):
 
         key = (pb_class_from, pb_class_to)
         if key in _registry:
-            raise RuntimeError(f"Already have a converter from {pb_class_from} to {pb_class_to}")
+            raise RuntimeError(
+                f"Already have a converter from {pb_class_from} to {pb_class_to}. "
+                f"If you intended to register a custom converter, ensure it is defined "
+                f"before any convert() call that involves these types (convert() "
+                f"auto-creates and caches converters for the entire message tree)."
+            )
         logger.debug(
             "Registering %s as converter from %s to %s",
             cls.__name__,

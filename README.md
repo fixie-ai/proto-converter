@@ -80,6 +80,11 @@ Any field that can't be auto-converted and isn't handled by `IGNORED_FIELDS` or
 `@convert_field` raises `NotImplementedError` at converter construction time, not
 during conversion — so missing fields are caught early.
 
+**Important:** `convert()` auto-creates and caches converters for the entire message
+tree on first call. If you define a `ProtoConverter` subclass for a type pair that
+was already auto-created, registration will fail. Define all custom converter
+subclasses before calling `convert()`.
+
 ## Custom type resolution
 
 The recursive converter needs to map protobuf `Descriptor` objects back to Python
@@ -121,9 +126,9 @@ dict lookup followed by a stateless conversion. It is thread-safe as long as any
 custom field conversions on the path are themselves thread-safe.
 
 However, converter *construction* (the first `convert()` call for a new type pair,
-or defining a `ProtoConverter` subclass) is not thread-safe. If this is a concern,
-create your converters at import time or during single-threaded startup rather than
-lazily from worker threads.
+or defining a `ProtoConverter` subclass) is not thread-safe. The same applies to
+`set_module_resolver()` and `set_type_resolver()`. If this is a concern, do all of
+these during single-threaded startup rather than lazily from worker threads.
 
 ## Proto2 notes
 

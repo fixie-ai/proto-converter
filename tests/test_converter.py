@@ -39,6 +39,13 @@ class TestAutoConvert:
         )
         assert roundtripped == src
 
+    def test_same_type_conversion(self):
+        """Converting a message to its own type produces an equal copy."""
+        src = api_pb2.SimpleMessage(text="hello", number=42)
+        dest = proto_converter.convert(src, api_pb2.SimpleMessage)
+        assert dest == src
+        assert dest is not src
+
     def test_deep_convert_no_registration(self):
         """The core use case: deep-convert an entire message tree with zero
         explicit converter registration. api_pb2.Address and internal_pb2.Address
@@ -235,6 +242,23 @@ class TestConvertField:
         src = internal_pb2.Person(name="Carol", internal_id="id-123")
         dest = proto_converter.convert(src, api_pb2.Person)
         expected = api_pb2.Person(name="Carol", metadata={"original_id": "id-123"})
+        assert_that(dest, equals_proto(expected))
+
+    def test_keyword_form(self):
+        """The keyword form @convert_field(field_names=[...]) used in Fixie."""
+
+        class InternalToApiPerson(
+            proto_converter.ProtoConverter[internal_pb2.Person, api_pb2.Person]
+        ):
+            IGNORED_FIELDS = ["created_at"]
+
+            @proto_converter.convert_field(field_names=["internal_id"])
+            def convert_id(self, src, dest):
+                dest.metadata["id"] = src.internal_id
+
+        src = internal_pb2.Person(name="Dave", internal_id="x")
+        dest = proto_converter.convert(src, api_pb2.Person)
+        expected = api_pb2.Person(name="Dave", metadata={"id": "x"})
         assert_that(dest, equals_proto(expected))
 
     def test_handler_not_overwritten_by_recursive_converter(self):
@@ -551,3 +575,23 @@ class TestErrors:
                 @proto_converter.convert_field(["internal_id"])
                 def handle2(self, src, dest):
                     pass
+
+    def test_convert_field_string_not_list(self):
+        with pytest.raises(TypeError, match="list of strings"):
+
+            class Bad(proto_converter.ProtoConverter[internal_pb2.Person, api_pb2.Person]):
+                IGNORED_FIELDS = ["created_at"]
+
+                @proto_converter.convert_field("internal_id")  # type: ignore[arg-type]
+                def handle(self, src, dest):
+                    pass
+
+    def test_auto_created_before_subclass(self):
+        """Calling convert() auto-creates converters for the tree; a later subclass fails."""
+        proto_converter.convert(api_pb2.SimpleMessage(text="hi"), internal_pb2.SimpleMessage)
+        with pytest.raises(RuntimeError, match="Already have a converter"):
+
+            class Late(
+                proto_converter.ProtoConverter[api_pb2.SimpleMessage, internal_pb2.SimpleMessage]
+            ):
+                pass
