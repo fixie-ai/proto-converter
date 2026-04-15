@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package test_internal;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/struct.proto";
+
+message Address {
+  string street = 1;
+  string city = 2;
+}
+
+message Person {
+  string name = 1;
+  int32 age = 2;
+  Address address = 3;
+  repeated string tags = 4;
+  map<string, string> metadata = 5;
+  repeated Address other_addresses = 6;
+  map<string, Address> named_addresses = 7;
+  google.protobuf.Struct extra = 8;
+
+  // Internal-only fields.
+  string internal_id = 100;
+  int64 created_at = 101;
+}
+
+message SimpleMessage {
+  string text = 1;
+  int32 number = 2;
+  bytes data = 3;
+  map<int32, string> int_keyed_map = 4;
+}
+
+message OneofMessage {
+  string name = 1;
+  oneof value {
+    string str_value = 2;
+    int32 int_value = 3;
+  }
+}
+
+// Compatible with api Status — same values, plus an extra one.
+enum Status {
+  STATUS_UNKNOWN = 0;
+  STATUS_ACTIVE = 1;
+  STATUS_INACTIVE = 2;
+  STATUS_ARCHIVED = 3;
+}
+
+// Only has values 0-2, missing api's CRITICAL (3).
+enum IncompatiblePriority {
+  INCOMPATIBLE_PRIORITY_UNSPECIFIED = 0;
+  INCOMPATIBLE_PRIORITY_LOW = 1;
+  INCOMPATIBLE_PRIORITY_HIGH = 2;
+}
+
+message EnumMessage {
+  string name = 1;
+  Status status = 2;
+}
+
+message IncompatibleEnumMessage {
+  string name = 1;
+  IncompatiblePriority priority = 2;
+}
+
+message TreeNode {
+  string name = 1;
+  repeated TreeNode children = 2;
+  string internal_note = 3;
+}
+
+message AnyHolder {
+  google.protobuf.Any payload = 1;
+  repeated google.protobuf.Any items = 2;
+}
+
+// Proto -> Any: typed on the api side, Any on the internal side.
+message TypedPayload {
+  google.protobuf.Any payload = 1;
+  repeated google.protobuf.Any payloads = 2;
+}
+
+message Outer {
+  message Inner {
+    string value = 1;
+  }
+  Inner nested = 1;
+  string label = 2;
+}
+
+message InternalDetail {
+  string info = 1;
+  int32 priority = 2;
+  string internal_note = 3;
+}
+
+message DifferentNested {
+  string label = 1;
+  InternalDetail detail = 2;
+  repeated InternalDetail details = 3;
+  map<string, InternalDetail> named_details = 4;
+}

@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package test_api;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/struct.proto";
+
+message Address {
+  string street = 1;
+  string city = 2;
+}
+
+message Person {
+  string name = 1;
+  int32 age = 2;
+  Address address = 3;
+  repeated string tags = 4;
+  map<string, string> metadata = 5;
+  repeated Address other_addresses = 6;
+  map<string, Address> named_addresses = 7;
+  google.protobuf.Struct extra = 8;
+}
+
+message SimpleMessage {
+  string text = 1;
+  int32 number = 2;
+  bytes data = 3;
+  map<int32, string> int_keyed_map = 4;
+}
+
+message OneofMessage {
+  string name = 1;
+  oneof value {
+    string str_value = 2;
+    int32 int_value = 3;
+  }
+}
+
+// Compatible enum — subset of internal Status values.
+enum Status {
+  STATUS_UNKNOWN = 0;
+  STATUS_ACTIVE = 1;
+  STATUS_INACTIVE = 2;
+}
+
+// Incompatible enum — has a value (3) that internal Priority lacks.
+enum IncompatiblePriority {
+  INCOMPATIBLE_PRIORITY_UNSPECIFIED = 0;
+  INCOMPATIBLE_PRIORITY_LOW = 1;
+  INCOMPATIBLE_PRIORITY_HIGH = 2;
+  INCOMPATIBLE_PRIORITY_CRITICAL = 3;
+}
+
+message EnumMessage {
+  string name = 1;
+  Status status = 2;
+}
+
+message IncompatibleEnumMessage {
+  string name = 1;
+  IncompatiblePriority priority = 2;
+}
+
+message ApiDetail {
+  string info = 1;
+  int32 priority = 2;
+}
+
+message TreeNode {
+  string name = 1;
+  repeated TreeNode children = 2;
+}
+
+message AnyHolder {
+  google.protobuf.Any payload = 1;
+  repeated google.protobuf.Any items = 2;
+}
+
+message TypedPayload {
+  SimpleMessage payload = 1;
+  repeated SimpleMessage payloads = 2;
+}
+
+message Outer {
+  message Inner {
+    string value = 1;
+  }
+  Inner nested = 1;
+  string label = 2;
+}
+
+message DifferentNested {
+  string label = 1;
+  ApiDetail detail = 2;
+  repeated ApiDetail details = 3;
+  map<string, ApiDetail> named_details = 4;
+}

@@ -1,0 +1,54 @@
+[project]
+name = "proto-converter"
+version = "1.0.0"
+description = "Automatic conversion between compatible protocol buffers"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["protobuf>=4.21.0"]
+
+[dependency-groups]
+dev = [
+    "deptry>=0.22.0",
+    "grpcio-tools>=1.60.0",
+    "hamcrest-proto>=0.0.6",
+    "mypy-protobuf>=3.0",
+    "pyhamcrest>=2.1.0",
+    "pyright>=1.1",
+    "pytest>=8.0",
+    "ruff>=0.4.0",
+    "test-protos",
+]
+
+[tool.uv.sources]
+test-protos = { path = "tests/test_protos", editable = true }
+
+[build-system]
+requires = ["uv_build>=0.11.6,<0.12"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "error",
+    "ignore:Type google._upb._message.*:DeprecationWarning",
+    # hamcrest-proto calls deprecated label() on protobuf descriptors (Python 3.13+)
+    "ignore:.*is deprecated.*Use is_required.*:DeprecationWarning",
+]
+
+[tool.pyright]
+extraPaths = ["tests/test_protos/src"]
+include = ["src", "tests/test_converter.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["tests/test_protos/src"]  # Generated code
+
+[tool.ruff.lint]
+extend-select = ["I", "B", "ASYNC", "T10"]
+ignore = ["E731"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+single-line-exclusions = ["typing", "hamcrest"]
