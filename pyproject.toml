@@ -1,6 +1,6 @@
 [project]
 name = "proto-converter"
-version = "1.0.0"
+version = "1.0.1"
 description = "Automatic conversion between compatible protocol buffers"
 readme = "README.md"
 license = "MIT"
