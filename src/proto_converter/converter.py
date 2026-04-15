@@ -28,6 +28,7 @@ T = TypeVar("T", bound=message.Message)
 
 FieldDescriptor = descriptor_mod.FieldDescriptor
 
+
 _registry: dict[tuple[type[message.Message], type[message.Message]], ProtoConverter[Any, Any]] = {}
 
 # User-installable hooks for type resolution.
@@ -431,7 +432,7 @@ class ProtoConverter(Generic[F, T]):
                     dest_value.MergeFrom(src_value)
 
             # Repeated fields
-            elif src_fd.is_repeated:
+            elif _field_is_repeated(src_fd):
                 if _is_any_field(dest_fd) and not _is_any_field(src_fd):
                     for item in src_value:
                         any_proto = any_pb2.Any()
@@ -535,7 +536,10 @@ def _is_src_field_auto_convertible(
 
     dest_field = dest_fields_by_name[src_field.name]
 
-    if dest_field.is_repeated != src_field.is_repeated or src_field.type != dest_field.type:
+    if (
+        _field_is_repeated(dest_field) != _field_is_repeated(src_field)
+        or src_field.type != dest_field.type
+    ):
         return False
 
     if _is_map_field(src_field):
@@ -581,7 +585,7 @@ def _is_any_field(field: FieldDescriptor) -> bool:
 def _is_map_field(field: FieldDescriptor) -> bool:
     mt = field.message_type
     return (
-        field.is_repeated
+        _field_is_repeated(field)
         and field.type == FieldDescriptor.TYPE_MESSAGE
         and mt is not None
         and mt.has_options
@@ -609,7 +613,7 @@ def _make_field_converter(
     def convert_field(
         _self: ProtoConverter[Any, Any], src: message.Message, dest: message.Message
     ) -> None:
-        if field.is_repeated:
+        if _field_is_repeated(field):
             src_value = getattr(src, field.name)
             dest_value = getattr(dest, field.name)
             dest_value.extend(field_converter.convert(v) for v in src_value)
@@ -617,6 +621,13 @@ def _make_field_converter(
             getattr(dest, field.name).CopyFrom(field_converter.convert(getattr(src, field.name)))
 
     return convert_field
+
+
+def _field_is_repeated(field: FieldDescriptor) -> bool:
+    """Compatibility helper: is_repeated was added in protobuf 5.x."""
+    if hasattr(field, "is_repeated"):
+        return field.is_repeated  # type: ignore[return-value]
+    return field.label == FieldDescriptor.LABEL_REPEATED  # pyright: ignore[reportAttributeAccessIssue,reportDeprecated]
 
 
 class _DeferredConverter(Generic[F, T]):
