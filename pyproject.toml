@@ -32,6 +32,8 @@ testpaths = ["tests"]
 filterwarnings = [
     "error",
     "ignore:Type google._upb._message.*:DeprecationWarning",
+    # hamcrest-proto calls deprecated label() on protobuf descriptors (Python 3.13+)
+    "ignore:.*is deprecated.*Use is_required.*:DeprecationWarning",
 ]
 
 [tool.pyright]
