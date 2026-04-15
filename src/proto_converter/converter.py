@@ -29,13 +29,6 @@ T = TypeVar("T", bound=message.Message)
 FieldDescriptor = descriptor_mod.FieldDescriptor
 
 
-def _field_is_repeated(field: FieldDescriptor) -> bool:
-    """Compatibility helper: is_repeated was added in protobuf 5.x."""
-    if hasattr(field, "is_repeated"):
-        return field.is_repeated  # type: ignore[return-value]
-    return field.label == FieldDescriptor.LABEL_REPEATED  # pyright: ignore[reportAttributeAccessIssue,reportDeprecated]
-
-
 _registry: dict[tuple[type[message.Message], type[message.Message]], ProtoConverter[Any, Any]] = {}
 
 # User-installable hooks for type resolution.
@@ -628,6 +621,13 @@ def _make_field_converter(
             getattr(dest, field.name).CopyFrom(field_converter.convert(getattr(src, field.name)))
 
     return convert_field
+
+
+def _field_is_repeated(field: FieldDescriptor) -> bool:
+    """Compatibility helper: is_repeated was added in protobuf 5.x."""
+    if hasattr(field, "is_repeated"):
+        return field.is_repeated  # type: ignore[return-value]
+    return field.label == FieldDescriptor.LABEL_REPEATED  # pyright: ignore[reportAttributeAccessIssue,reportDeprecated]
 
 
 class _DeferredConverter(Generic[F, T]):
