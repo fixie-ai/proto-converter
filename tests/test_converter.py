@@ -245,7 +245,7 @@ class TestConvertField:
         assert_that(dest, equals_proto(expected))
 
     def test_keyword_form(self):
-        """The keyword form @convert_field(field_names=[...]) used in Fixie."""
+        """The keyword form @convert_field(field_names=[...])."""
 
         class InternalToApiPerson(
             proto_converter.ProtoConverter[internal_pb2.Person, api_pb2.Person]
