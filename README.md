@@ -1,7 +1,7 @@
 # proto-converter
 
-Automatic deep conversion between compatible proto3 protocol buffer types. Inspired
-by [python-proto-converter](https://github.com/google/python-proto-converter) but
+Automatic deep conversion between compatible protocol buffer types. Inspired by
+[python-proto-converter](https://github.com/google/python-proto-converter) but
 designed to require far less boilerplate.
 
 ## The problem
@@ -124,6 +124,20 @@ However, converter *construction* (the first `convert()` call for a new type pai
 or defining a `ProtoConverter` subclass) is not thread-safe. If this is a concern,
 create your converters at import time or during single-threaded startup rather than
 lazily from worker threads.
+
+## Proto2 notes
+
+This library is designed for proto3 but works with proto2 in most cases. Known
+differences:
+
+- **Default values**: auto-conversion uses `ListFields()`, which skips fields set
+  to their default value. In proto3 this is standard (defaults are always
+  zero-values). In proto2, fields with explicit non-zero defaults that happen to be
+  set to that default will be skipped. Use `@convert_field` for any proto2 fields
+  where preserving explicit defaults matters.
+- **Required fields**: not validated — a required source field at its default won't
+  be copied, potentially producing an invalid destination message.
+- **Groups**: not supported (groups are extremely rare in practice).
 
 ## Development
 
