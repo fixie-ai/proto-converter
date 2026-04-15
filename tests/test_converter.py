@@ -484,3 +484,17 @@ class TestErrors:
                 @proto_converter.convert_field(["nonexistent"])
                 def handle(self, src, dest):
                     pass
+
+    def test_duplicate_convert_field(self):
+        with pytest.raises(ValueError, match="internal_id"):
+
+            class Bad(proto_converter.ProtoConverter[internal_pb2.Person, api_pb2.Person]):
+                IGNORED_FIELDS = ["created_at"]
+
+                @proto_converter.convert_field(["internal_id"])
+                def handle1(self, src, dest):
+                    pass
+
+                @proto_converter.convert_field(["internal_id"])
+                def handle2(self, src, dest):
+                    pass

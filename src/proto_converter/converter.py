@@ -226,13 +226,19 @@ class ProtoConverter(Generic[F, T]):
 
     def _validate_fields(self) -> None:
         """Ensure every source field is either auto-convertible, explicitly handled, or ignored."""
+        seen_field_names: set[str] = set()
         for entry in dir(self.__class__):
             obj = getattr(self.__class__, entry)
             if callable(obj) and hasattr(obj, "convert_field_names"):
+                names = obj.convert_field_names  # pyright: ignore[reportFunctionMemberAccess]
+                overlap = seen_field_names & set(names)
+                if overlap:
+                    raise ValueError(
+                        f"Multiple @convert_field handlers claim the same fields: {overlap}"
+                    )
+                seen_field_names.update(names)
                 self._convert_functions.append(obj)  # pyright: ignore[reportArgumentType]
-                self._function_convert_field_names.extend(
-                    obj.convert_field_names  # pyright: ignore[reportFunctionMemberAccess]
-                )
+                self._function_convert_field_names.extend(names)
 
         # Protobuf stubs union two FieldDescriptor implementations; cast to the public one.
         src_fields: Sequence[FieldDescriptor] = self._pb_class_from.DESCRIPTOR.fields  # type: ignore[assignment]
