@@ -23,6 +23,8 @@ convertible, no converters need to be defined at all.
 Call `proto_converter.convert(msg, TargetType)` and it figures out the rest:
 
 1. **Scalars, enums, `Struct`, `Any`** — copied when the name and type match.
+   Enums with different types are compatible if every source value number exists
+   in the destination (matching proto wire-format semantics).
 2. **Nested messages** (singular, repeated, and map values) — if the field names
    match but the message types differ, a converter for the nested types is created
    automatically and applied recursively. This works to arbitrary depth.

@@ -95,6 +95,24 @@ class TestAutoConvert:
         dest = proto_converter.convert(src, internal_pb2.SimpleMessage)
         assert dest == internal_pb2.SimpleMessage()
 
+    def test_bytes_field(self):
+        src = api_pb2.SimpleMessage(text="hello", data=b"\x00\x01\xff")
+        dest = proto_converter.convert(src, internal_pb2.SimpleMessage)
+        expected = internal_pb2.SimpleMessage(text="hello", data=b"\x00\x01\xff")
+        assert_that(dest, equals_proto(expected))
+
+    def test_int_keyed_map(self):
+        src = api_pb2.SimpleMessage(int_keyed_map={1: "one", 2: "two"})
+        dest = proto_converter.convert(src, internal_pb2.SimpleMessage)
+        expected = internal_pb2.SimpleMessage(int_keyed_map={1: "one", 2: "two"})
+        assert_that(dest, equals_proto(expected))
+
+    def test_proto3_default_values_not_copied(self):
+        """Proto3 fields set to their default value are not copied (ListFields skips them)."""
+        src = api_pb2.SimpleMessage(text="", number=0)
+        dest = proto_converter.convert(src, internal_pb2.SimpleMessage)
+        assert dest == internal_pb2.SimpleMessage()
+
     def test_any_singular(self):
         """Singular Any field is copied between matching Any fields."""
         inner = api_pb2.SimpleMessage(text="packed", number=7)
@@ -450,3 +468,19 @@ class TestErrors:
             proto_converter.get_converter(
                 api_pb2.IncompatibleEnumMessage, internal_pb2.IncompatibleEnumMessage
             )
+
+    def test_bogus_ignored_field(self):
+        with pytest.raises(ValueError, match="internal_idd"):
+
+            class Bad(proto_converter.ProtoConverter[internal_pb2.Person, api_pb2.Person]):
+                IGNORED_FIELDS = ["internal_idd", "created_at"]
+
+    def test_bogus_convert_field(self):
+        with pytest.raises(ValueError, match="nonexistent"):
+
+            class Bad(proto_converter.ProtoConverter[internal_pb2.Person, api_pb2.Person]):
+                IGNORED_FIELDS = ["internal_id", "created_at"]
+
+                @proto_converter.convert_field(["nonexistent"])
+                def handle(self, src, dest):
+                    pass

@@ -28,6 +28,8 @@ message Person {
 message SimpleMessage {
   string text = 1;
   int32 number = 2;
+  bytes data = 3;
+  map<int32, string> int_keyed_map = 4;
 }
 
 message OneofMessage {

@@ -10,7 +10,6 @@ Nested message fields with different types are auto-converted if a converter exi
 
 from __future__ import annotations
 
-import functools
 import importlib
 import logging
 from collections.abc import Callable
@@ -140,12 +139,7 @@ def convert_field(field_names: list[str] | None = None) -> Callable[[Callable], 
 
     def decorator(fn: Callable) -> Callable:
         fn.convert_field_names = field_names  # type: ignore[attr-defined]
-
-        @functools.wraps(fn)
-        def wrapper(self: Any, src_proto: Any, dest_proto: Any) -> None:
-            fn(self, src_proto, dest_proto)
-
-        return wrapper
+        return fn
 
     return decorator
 
@@ -186,6 +180,12 @@ class ProtoConverter(Generic[F, T]):
         self._unconverted_fields: list[str] = []
 
         self._validate_fields()
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}"
+            f"({self._pb_class_from.__name__} -> {self._pb_class_to.__name__})"
+        )
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
@@ -253,15 +253,31 @@ class ProtoConverter(Generic[F, T]):
                 self._pb_class_to, self._pb_class_from, self._field_names_to_ignore
             )
 
+        # Validate that IGNORED_FIELDS and @convert_field names reference real source fields.
+        # Check this before the unconverted-fields error so a typo in IGNORED_FIELDS
+        # surfaces as "bogus field name" rather than the confusing "field X is unhandled."
+        src_field_names = {f.name for f in src_fields}
+        bogus_ignored = set(self._field_names_to_ignore) - src_field_names
+        if bogus_ignored:
+            raise ValueError(
+                f"IGNORED_FIELDS contains names not present in source "
+                f"{self._pb_class_from}: {bogus_ignored}"
+            )
+        bogus_handled = set(self._function_convert_field_names) - src_field_names
+        if bogus_handled:
+            raise ValueError(
+                f"@convert_field references names not present in source "
+                f"{self._pb_class_from}: {bogus_handled}"
+            )
+
         unconverted = set(self._unconverted_fields) - set(self._function_convert_field_names)
         if unconverted:
-            src_names = {f.name for f in src_fields}
             dest_names = set(dest_by_name.keys())
             raise NotImplementedError(
                 "Fields can't be automatically converted; must either be explicitly handled "
                 f"or ignored. Converting from {self._pb_class_from} to {self._pb_class_to}. "
                 f"Unhandled fields: {unconverted}.\n\n"
-                f"Source has fields: {src_names}.\nDestination has fields: {dest_names}."
+                f"Source has fields: {src_field_names}.\nDestination has fields: {dest_names}."
             )
 
         # Freeze to sets now that mutation is done — used for O(1) lookups in _auto_convert.
@@ -509,6 +525,7 @@ def _is_src_field_auto_convertible(
         if src_enum == dest_enum:
             return True
         # Different enum types: auto-convertible if every source value number exists in dest.
+        # Comparison is by number (matching proto wire format), not by name.
         if src_enum is not None and dest_enum is not None:
             dest_numbers = {v.number for v in dest_enum.values}
             return all(v.number in dest_numbers for v in src_enum.values)
@@ -583,9 +600,14 @@ class _DeferredConverter(Generic[F, T]):
 
     def __init__(self, pb_class_from: type[F], pb_class_to: type[T]) -> None:
         self._key = (pb_class_from, pb_class_to)
+        self._resolved: ProtoConverter[F, T] | None = None
 
     def convert(self, src: F) -> T:
-        real = _registry.get(self._key)
-        if not isinstance(real, ProtoConverter):
-            raise RuntimeError(f"Circular converter for {self._key} was never fully constructed")
-        return real.convert(src)
+        if self._resolved is None:
+            real = _registry.get(self._key)
+            if not isinstance(real, ProtoConverter):
+                raise RuntimeError(
+                    f"Circular converter for {self._key} was never fully constructed"
+                )
+            self._resolved = real
+        return self._resolved.convert(src)
