@@ -76,6 +76,12 @@ message AnyHolder {
   repeated google.protobuf.Any items = 2;
 }
 
+// Proto -> Any: typed on the api side, Any on the internal side.
+message TypedPayload {
+  google.protobuf.Any payload = 1;
+  repeated google.protobuf.Any payloads = 2;
+}
+
 message Outer {
   message Inner {
     string value = 1;

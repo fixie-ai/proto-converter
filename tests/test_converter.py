@@ -139,6 +139,31 @@ class TestAutoConvert:
         expected = internal_pb2.AnyHolder(items=items)
         assert_that(dest, equals_proto(expected))
 
+    def test_typed_to_any_singular(self):
+        """Proto -> Any auto-conversion: typed field is packed into Any."""
+        src = api_pb2.TypedPayload(
+            payload=api_pb2.SimpleMessage(text="typed", number=42),
+        )
+        dest = proto_converter.convert(src, internal_pb2.TypedPayload)
+        unpacked = api_pb2.SimpleMessage()
+        dest.payload.Unpack(unpacked)
+        assert_that(unpacked, equals_proto(api_pb2.SimpleMessage(text="typed", number=42)))
+
+    def test_typed_to_any_repeated(self):
+        """Repeated Proto -> Any auto-conversion: each element is packed."""
+        src = api_pb2.TypedPayload(
+            payloads=[
+                api_pb2.SimpleMessage(text="a"),
+                api_pb2.SimpleMessage(text="b"),
+            ],
+        )
+        dest = proto_converter.convert(src, internal_pb2.TypedPayload)
+        assert len(dest.payloads) == 2
+        for i, text in enumerate(["a", "b"]):
+            unpacked = api_pb2.SimpleMessage()
+            dest.payloads[i].Unpack(unpacked)
+            assert unpacked.text == text
+
     def test_nested_message_type(self):
         """Messages defined inside another message (Outer.Inner) are resolved correctly."""
         src = api_pb2.Outer(

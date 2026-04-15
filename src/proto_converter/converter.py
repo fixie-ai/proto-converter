@@ -133,6 +133,8 @@ def convert_field(field_names: list[str] | None = None) -> Callable[[Callable], 
             def convert_my_fields(self, src, dest):
                 dest.other_field = transform(src.my_field)
     """
+    if callable(field_names):
+        raise TypeError("convert_field() must be called with parentheses: @convert_field([...])")
     if field_names is None:
         field_names = []
 
@@ -341,7 +343,7 @@ class ProtoConverter(Generic[F, T]):
                             _descriptor_to_type(src_map["value"].message_type),
                             _descriptor_to_type(dest_map["value"].message_type),
                         )
-                    except NotImplementedError:
+                    except (NotImplementedError, RuntimeError):
                         pass
                     else:
                         self._function_convert_field_names.append(field.name)
@@ -361,7 +363,7 @@ class ProtoConverter(Generic[F, T]):
                         _descriptor_to_type(field.message_type),
                         _descriptor_to_type(dest_field.message_type),
                     )
-                except NotImplementedError:
+                except (NotImplementedError, RuntimeError):
                     pass
                 else:
                     self._function_convert_field_names.append(field.name)
@@ -508,7 +510,10 @@ def _descriptor_to_type(desc: descriptor_mod.Descriptor) -> type[message.Message
             clazz = getattr(clazz, nesting)
         return clazz
     except Exception as e:
-        raise RuntimeError(f"Couldn't resolve type for {desc.full_name}") from e
+        raise RuntimeError(
+            f"Couldn't resolve type for {desc.full_name}. If your proto packages don't "
+            f"map to Python packages, use set_module_resolver() or set_type_resolver()."
+        ) from e
 
 
 def _is_src_field_auto_convertible(

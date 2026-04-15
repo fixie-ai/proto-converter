@@ -1,7 +1,7 @@
 # proto-converter
 
-Automatic deep conversion between compatible protocol buffer types. Inspired by
-[python-proto-converter](https://github.com/google/python-proto-converter) but
+Automatic deep conversion between compatible proto3 protocol buffer types. Inspired
+by [python-proto-converter](https://github.com/google/python-proto-converter) but
 designed to require far less boilerplate.
 
 ## The problem
@@ -34,6 +34,10 @@ Call `proto_converter.convert(msg, TargetType)` and it figures out the rest:
 When the types *aren't* fully compatible (extra fields, renamed fields, fields
 that need transformation), you register a converter subclass — but only for the
 specific type pair that differs, not the whole tree.
+
+Note the asymmetry: extra *source* fields with no destination counterpart raise
+`NotImplementedError` (potential data loss). Extra *destination* fields are left
+at their proto3 defaults (harmless).
 
 ## Installation
 

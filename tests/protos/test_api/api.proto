@@ -76,6 +76,11 @@ message AnyHolder {
   repeated google.protobuf.Any items = 2;
 }
 
+message TypedPayload {
+  SimpleMessage payload = 1;
+  repeated SimpleMessage payloads = 2;
+}
+
 message Outer {
   message Inner {
     string value = 1;
