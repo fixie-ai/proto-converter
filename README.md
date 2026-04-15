@@ -154,3 +154,10 @@ just check                       # lint + type check
 just format                      # auto-format
 just build-protos                # regenerate test protos after changing .proto files
 ```
+
+## Releasing
+
+1. Update the version in `pyproject.toml`.
+2. Merge to `main`.
+3. Tag and push: `git tag v<version> && git push origin v<version>`
+4. Build and publish: `uv build && uv publish`
