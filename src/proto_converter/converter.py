@@ -123,9 +123,8 @@ def set_module_resolver(
 def convert_field(field_names: list[str] | None = None) -> Callable[[Callable], Callable]:
     """Decorator marking a method as a custom field converter.
 
-    The handler runs after auto-conversion, so for fields that are already
-    auto-convertible (same name and type in both protos), the auto-converted value
-    will be overwritten by the handler.
+    Fields claimed by a handler are excluded from auto-conversion — only the
+    handler's logic runs for those fields.
 
     Usage::
 
@@ -286,8 +285,14 @@ class ProtoConverter(Generic[F, T]):
                 f"Source has fields: {src_field_names}.\nDestination has fields: {dest_names}."
             )
 
-        # Freeze to sets now that mutation is done — used for O(1) lookups in _auto_convert.
-        self._skip_fields = set(self._field_names_to_ignore) | set(self._unconverted_fields)
+        # Freeze to a set now that mutation is done — used for O(1) lookups in _auto_convert.
+        # Includes ignored fields, unconverted fields, and fields claimed by @convert_field
+        # handlers (which run separately after auto-conversion).
+        self._skip_fields = (
+            set(self._field_names_to_ignore)
+            | set(self._unconverted_fields)
+            | set(self._function_convert_field_names)
+        )
 
     def _register_recursive_converters(
         self,
@@ -305,6 +310,9 @@ class ProtoConverter(Generic[F, T]):
         unhandled: list[str] = []
         for field in src_fields:
             if field.name in ignored:
+                continue
+
+            if field.name in self._function_convert_field_names:
                 continue
 
             if _is_src_field_auto_convertible(field, dest_fields_by_name):

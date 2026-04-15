@@ -212,6 +212,34 @@ class TestConvertField:
         expected = api_pb2.Person(name="Carol", metadata={"original_id": "id-123"})
         assert_that(dest, equals_proto(expected))
 
+    def test_handler_not_overwritten_by_recursive_converter(self):
+        """A @convert_field handler for a field with different-but-convertible message
+        types must not be silently overwritten by a recursive auto-converter."""
+
+        class _InternalToApi(
+            proto_converter.ProtoConverter[internal_pb2.InternalDetail, api_pb2.ApiDetail]
+        ):
+            IGNORED_FIELDS = ["internal_note"]
+
+        class _NestedConverter(
+            proto_converter.ProtoConverter[internal_pb2.DifferentNested, api_pb2.DifferentNested]
+        ):
+            @proto_converter.convert_field(["detail"])
+            def convert_detail(self, src, dest):
+                dest.detail.info = src.detail.info.upper()
+                dest.detail.priority = 999
+
+        src = internal_pb2.DifferentNested(
+            label="test",
+            detail=internal_pb2.InternalDetail(info="hello", priority=1, internal_note="n"),
+        )
+        dest = proto_converter.convert(src, api_pb2.DifferentNested)
+        expected = api_pb2.DifferentNested(
+            label="test",
+            detail=api_pb2.ApiDetail(info="HELLO", priority=999),
+        )
+        assert_that(dest, equals_proto(expected))
+
 
 # ---------------------------------------------------------------------------
 # Recursive nested conversion (different message types)
