@@ -586,8 +586,19 @@ class TestErrors:
                 def handle(self, src, dest):
                     pass
 
-    def test_auto_created_before_subclass(self):
-        """Calling convert() auto-creates converters for the tree; a later subclass fails."""
+    def test_replace_unused_auto_converter(self):
+        """An auto-created converter can be replaced by a subclass before first use."""
+        # Auto-create via get_converter (but don't call convert).
+        proto_converter.get_converter(api_pb2.SimpleMessage, internal_pb2.SimpleMessage)
+
+        # Replacing with a subclass should succeed since it hasn't been used.
+        class Replacement(
+            proto_converter.ProtoConverter[api_pb2.SimpleMessage, internal_pb2.SimpleMessage]
+        ):
+            pass
+
+    def test_replace_used_auto_converter_fails(self):
+        """Once an auto-created converter has been used, it can't be replaced."""
         proto_converter.convert(api_pb2.SimpleMessage(text="hi"), internal_pb2.SimpleMessage)
         with pytest.raises(RuntimeError, match="Already have a converter"):
 

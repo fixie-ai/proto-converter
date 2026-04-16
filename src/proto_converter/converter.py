@@ -56,7 +56,7 @@ def get_converter(pb_class_from: type[F], pb_class_to: type[T]) -> ProtoConverte
     # Insert sentinel before construction to break circular references.
     _registry[key] = _BUILDING  # type: ignore[assignment]
     try:
-        converter = ProtoConverter(pb_class_from=pb_class_from, pb_class_to=pb_class_to)
+        converter = _AutoConverter(pb_class_from=pb_class_from, pb_class_to=pb_class_to)
     except Exception:
         _registry.pop(key, None)
         raise
@@ -206,14 +206,26 @@ class ProtoConverter(Generic[F, T]):
             # type parameters get registered.
             return
 
+        if isinstance(pb_class_from, TypeVar) or isinstance(pb_class_to, TypeVar):
+            # Generic subclass with unresolved type vars (e.g. _AutoConverter[F, T]).
+            return
+
         key = (pb_class_from, pb_class_to)
-        if key in _registry:
-            raise RuntimeError(
-                f"Already have a converter from {pb_class_from} to {pb_class_to}. "
-                f"If you intended to register a custom converter, ensure it is defined "
-                f"before any convert() call that involves these types (convert() "
-                f"auto-creates and caches converters for the entire message tree)."
-            )
+        existing = _registry.get(key)
+        if existing is not None:
+            if isinstance(existing, _AutoConverter) and not existing._used:
+                # An auto-created converter that hasn't been used yet can be safely
+                # replaced by an explicit subclass (no observable behavior change).
+                logger.debug(
+                    "Replacing unused auto-converter for %s -> %s with %s",
+                    pb_class_from,
+                    pb_class_to,
+                    cls.__name__,
+                )
+            else:
+                raise RuntimeError(
+                    f"Already have a converter from {pb_class_from} to {pb_class_to}."
+                )
         logger.debug(
             "Registering %s as converter from %s to %s",
             cls.__name__,
@@ -451,6 +463,22 @@ class ProtoConverter(Generic[F, T]):
             # Scalars
             else:
                 setattr(dest, src_fd.name, src_value)
+
+
+class _AutoConverter(ProtoConverter[F, T]):
+    """Auto-created converter produced by get_converter().
+
+    Tracks whether convert() has been called. An unused _AutoConverter can be
+    replaced by an explicit ProtoConverter subclass registered later, eliminating
+    class-definition ordering constraints. Once used, replacement is forbidden
+    to preserve the invariant that convert() behavior doesn't change.
+    """
+
+    _used = False
+
+    def convert(self, src: F) -> T:
+        self._used = True
+        return super().convert(src)
 
 
 def _validate_oneof_multi_mapping(

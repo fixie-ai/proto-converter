@@ -80,10 +80,27 @@ Any field that can't be auto-converted and isn't handled by `IGNORED_FIELDS` or
 `@convert_field` raises `NotImplementedError` at converter construction time, not
 during conversion — so missing fields are caught early.
 
-**Important:** `convert()` auto-creates and caches converters for the entire message
-tree on first call. If you define a `ProtoConverter` subclass for a type pair that
-was already auto-created, registration will fail. Define all custom converter
-subclasses before calling `convert()`.
+## Converter registration and ordering
+
+`convert()` auto-creates and caches converters for the entire message tree on
+first call. If you later define a `ProtoConverter` subclass for a type pair that
+was auto-created, the subclass replaces it — as long as the auto-created converter
+hasn't been used for a conversion yet. This means class definition order usually
+doesn't matter: you can define parent converters before or after leaf converters.
+
+There are two cases where ordering still matters:
+
+1. **Subtype requires a custom converter but can't be auto-converted** (e.g. field
+   names differ between source and destination). The auto-creation attempt will fail
+   at the parent's registration time if the custom subtype converter hasn't been
+   defined yet.
+2. **An auto-created converter has already been used.** Once `convert()` has produced
+   output through a converter, that converter is locked in — replacing it would change
+   the behavior of `convert()` for a type pair that callers have already relied on.
+   Attempting to register a subclass at this point raises `RuntimeError`.
+
+In practice, both cases are easy to avoid: define all custom converter subclasses
+during startup (e.g. by importing the module) before invoking `convert()`.
 
 ## Custom type resolution
 
