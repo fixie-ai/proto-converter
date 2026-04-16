@@ -477,6 +477,12 @@ class _AutoConverter(ProtoConverter[F, T]):
     _used = False
 
     def convert(self, src: F) -> T:
+        key = (self._pb_class_from, self._pb_class_to)
+        current = _registry.get(key)
+        if current is not None and current is not self:
+            # We've been replaced — delegate to the replacement so that parent
+            # closures (which captured this instance) use the new converter.
+            return current.convert(src)
         self._used = True
         return super().convert(src)
 

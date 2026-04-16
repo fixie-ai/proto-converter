@@ -597,6 +597,32 @@ class TestErrors:
         ):
             pass
 
+    def test_replacement_used_by_parent_closure(self):
+        """When a parent converter's closure captured an auto-converter for a nested
+        type, replacing that auto-converter with a subclass must affect the parent's
+        conversion too — not just direct convert() calls."""
+
+        # Step 1: parent auto-creates ApiDetail -> InternalDetail as _AutoConverter.
+        class _NestedConverter(
+            proto_converter.ProtoConverter[api_pb2.DifferentNested, internal_pb2.DifferentNested]
+        ):
+            pass
+
+        # Step 2: replace with custom converter that suppresses priority.
+        class _DetailConverter(
+            proto_converter.ProtoConverter[api_pb2.ApiDetail, internal_pb2.InternalDetail]
+        ):
+            IGNORED_FIELDS = ["priority"]
+
+        # Step 3: convert through parent — should use the replacement.
+        src = api_pb2.DifferentNested(
+            label="test",
+            detail=api_pb2.ApiDetail(info="x", priority=42),
+        )
+        dest = proto_converter.convert(src, internal_pb2.DifferentNested)
+        assert dest.detail.info == "x"
+        assert dest.detail.priority == 0  # suppressed by replacement, not 42
+
     def test_replace_used_auto_converter_fails(self):
         """Once an auto-created converter has been used, it can't be replaced."""
         proto_converter.convert(api_pb2.SimpleMessage(text="hi"), internal_pb2.SimpleMessage)
