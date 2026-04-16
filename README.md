@@ -109,14 +109,12 @@ For full control over type resolution (e.g. when you need to intercept at the
 
 ## Test recommendations
 
-For most projects, it is worthwhile to have tests converting between top-level
-messages. The tests may exercise any custom conversions registered. If there are
-no custom conversions, it's sufficient to test conversion of a default instance.
-This will catch the introduction of any fields that cannot be automatically
-converted since convertability is checked during converter construction.
+For most projects, no conversion-specific tests are likely to be helpful as
+higher-level tests ought to invoke the code path calling `convert` anyway. That
+invocation is sufficient to ensure all fields can be converted.
 
-(Testing conversion explicitly is typically unhelpful given that the code using
-a converter has its own tests that invoke `convert` at some point.)
+If specific customized conversion code is difficult to test at a higher level,
+that may warrant conversion tests.
 
 ## Thread safety
 
