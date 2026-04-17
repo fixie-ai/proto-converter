@@ -419,7 +419,7 @@ class TestTypeResolver:
 
 class TestModuleResolver:
     def test_module_remapping(self):
-        """set_module_resolver's return value is used as the import path."""
+        """set_module_resolver's return value is used as the import path. (deprecated)"""
         remapped: list[tuple[str, str | None]] = []
 
         def resolver(module_path: str) -> str | None:
@@ -434,7 +434,8 @@ class TestModuleResolver:
             remapped.append((module_path, None))
             return None
 
-        proto_converter.set_module_resolver(resolver)
+        with pytest.warns(DeprecationWarning, match="set_module_resolver is deprecated"):
+            proto_converter.set_module_resolver(resolver)
         try:
             src = api_pb2.Person(
                 name="test",
@@ -448,7 +449,98 @@ class TestModuleResolver:
             assert internal_calls
             assert all(r is not None for _, r in internal_calls)
         finally:
-            proto_converter.set_module_resolver(None)
+            with pytest.warns(DeprecationWarning):
+                proto_converter.set_module_resolver(None)
+
+
+class TestModuleResolverRules:
+    @pytest.fixture(autouse=True)
+    def _clear_rules(self):
+        """Ensure each test starts with no rules registered."""
+        from proto_converter.converter import _module_resolver_rules
+
+        saved = list(_module_resolver_rules)
+        _module_resolver_rules.clear()
+        yield
+        _module_resolver_rules.clear()
+        _module_resolver_rules.extend(saved)
+
+    def test_rule_with_named_group(self):
+        """A rule with a named capture group rewrites the module path via str.format."""
+        # Identity remap for test_internal using a named group.
+        proto_converter.add_module_resolver_rule(
+            r"test_internal\.(?P<rest>.+)", "test_internal.{rest}"
+        )
+
+        src = api_pb2.Person(
+            name="test",
+            address=api_pb2.Address(street="Main St", city="Town"),
+        )
+        dest = proto_converter.convert(src, internal_pb2.Person)
+        assert dest.name == "test"
+
+    def test_rule_with_positional_group(self):
+        """Positional groups are passed as *args to str.format."""
+        proto_converter.add_module_resolver_rule(r"test_internal\.(.+)", "test_internal.{0}")
+
+        src = api_pb2.Person(
+            name="test",
+            address=api_pb2.Address(street="Main St", city="Town"),
+        )
+        dest = proto_converter.convert(src, internal_pb2.Person)
+        assert dest.name == "test"
+
+    def test_rule_requires_full_match(self):
+        """A pattern that only matches a prefix does not fire."""
+        # Pattern matches 'test_internal' but not the full 'test_internal.internal_pb2'.
+        proto_converter.add_module_resolver_rule(r"test_internal", "bogus.does_not_exist")
+
+        # Conversion should still work because the rule doesn't fullmatch the full path,
+        # so the default resolver is used. Person has a nested Address field that
+        # triggers module resolution.
+        src = api_pb2.Person(
+            name="test",
+            address=api_pb2.Address(street="Main St", city="Town"),
+        )
+        dest = proto_converter.convert(src, internal_pb2.Person)
+        assert dest.name == "test"
+
+    def test_duplicate_rule_same_replacement_is_noop(self):
+        """Adding the same pattern/replacement twice is silently deduped."""
+        proto_converter.add_module_resolver_rule(r"foo\..+", "bar.{0}")
+        proto_converter.add_module_resolver_rule(r"foo\..+", "bar.{0}")  # no-op
+        # Should still work (no ambiguous match since it's deduped to one rule).
+        from proto_converter.converter import _module_resolver_rules
+
+        assert len(_module_resolver_rules) == 1
+
+    def test_duplicate_rule_different_replacement_raises(self):
+        proto_converter.add_module_resolver_rule(r"foo\..+", "bar.{0}")
+        with pytest.raises(ValueError, match="already registered"):
+            proto_converter.add_module_resolver_rule(r"foo\..+", "baz.{0}")
+
+    def test_ambiguous_match_raises(self):
+        """Two rules matching the same path produce a RuntimeError at conversion."""
+        proto_converter.add_module_resolver_rule(r"test_internal\..+", "test_internal.{0}")
+        proto_converter.add_module_resolver_rule(
+            r"test_internal\.(?P<rest>.+)", "test_internal.{rest}"
+        )
+
+        # Person has a nested Address field, triggering module resolution.
+        src = api_pb2.Person(name="test", address=api_pb2.Address(street="Main St", city="Town"))
+        with pytest.raises(ValueError, match="Multiple module resolver rules matched"):
+            proto_converter.convert(src, internal_pb2.Person)
+
+    def test_remove_rule(self):
+        proto_converter.add_module_resolver_rule(r"foo\..+", "bar.{0}")
+        proto_converter.remove_module_resolver_rule(r"foo\..+")
+        from proto_converter.converter import _module_resolver_rules
+
+        assert len(_module_resolver_rules) == 0
+
+    def test_remove_nonexistent_rule_raises(self):
+        with pytest.raises(KeyError, match="No resolver rule"):
+            proto_converter.remove_module_resolver_rule(r"nothing\..+")
 
 
 # ---------------------------------------------------------------------------

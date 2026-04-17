@@ -1,11 +1,11 @@
 [project]
 name = "proto-converter"
-version = "1.0.1"
+version = "1.1.0"
 description = "Automatic conversion between compatible protocol buffers"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
-dependencies = ["protobuf>=4.21.0"]
+dependencies = ["protobuf>=4.21.0", "regex>=2024.0.0"]
 
 [dependency-groups]
 dev = [

@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import importlib
 import logging
+import warnings
 from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from typing import Any, Generic, TypeVar, get_args, get_origin
 
+import regex
 from google.protobuf import any_pb2
 from google.protobuf import descriptor as descriptor_mod
 from google.protobuf import message
@@ -34,6 +36,7 @@ _registry: dict[tuple[type[message.Message], type[message.Message]], ProtoConver
 # User-installable hooks for type resolution.
 _type_resolver: Callable[[descriptor_mod.Descriptor], type[message.Message] | None] | None = None
 _module_resolver: Callable[[str], str | None] | None = None
+_module_resolver_rules: list[tuple[regex.Pattern[str], str]] = []
 
 
 class _BuildingSentinel:
@@ -85,7 +88,7 @@ def set_type_resolver(
     default import-based resolution.
 
     This is the general escape hatch. For the common case of remapping package prefixes,
-    see :func:`set_module_resolver`.
+    see :func:`add_module_resolver_rule`.
 
     Pass ``None`` to remove a previously installed resolver.
     """
@@ -93,25 +96,89 @@ def set_type_resolver(
     _type_resolver = resolver
 
 
+def add_module_resolver_rule(pattern: str, replacement: str) -> None:
+    """Add a regex rule for remapping Python module paths during type resolution.
+
+    The pattern must fully match the Python module path (as derived from the
+    proto package + file name). On match, the replacement is produced by calling
+    ``str.format`` with the match's groups as positional args and named groups
+    as keyword args.
+
+    Example — remap every proto package starting with ``ultravox.`` to live under
+    the Python package ``ultravox_proto``::
+
+        proto_converter.add_module_resolver_rule(
+            r"ultravox\\.(?P<rest>.+)", "ultravox_proto.ultravox.{rest}"
+        )
+
+    Rules compose: multiple calls add independent rules. If more than one rule
+    matches a given module path, conversion raises ``ValueError`` — ambiguous
+    matches are treated as configuration bugs.
+
+    Adding a rule whose pattern is already registered with the same replacement is
+    a no-op (useful when multiple modules register the same rule at import time).
+    Adding the same pattern with a different replacement raises ``ValueError``.
+    """
+    compiled = regex.compile(pattern)
+    for existing_pattern, existing_replacement in _module_resolver_rules:
+        if existing_pattern.pattern == compiled.pattern:
+            if existing_replacement == replacement:
+                return  # No-op: exact duplicate.
+            raise ValueError(
+                f"Rule with pattern {pattern!r} is already registered with a different "
+                f"replacement ({existing_replacement!r} vs {replacement!r})."
+            )
+    _module_resolver_rules.append((compiled, replacement))
+
+
+def remove_module_resolver_rule(pattern: str) -> None:
+    """Remove a previously-added resolver rule. Raises ``KeyError`` if not found."""
+    for i, (existing_pattern, _) in enumerate(_module_resolver_rules):
+        if existing_pattern.pattern == pattern:
+            del _module_resolver_rules[i]
+            return
+    raise KeyError(f"No resolver rule registered with pattern {pattern!r}")
+
+
+def _apply_module_resolver_rules(module_path: str) -> str | None:
+    """Apply registered rules to a module path. Returns the remapped path or None."""
+    matches: list[tuple[regex.Pattern[str], str, regex.Match[str]]] = []
+    for pattern, replacement in _module_resolver_rules:
+        match = pattern.fullmatch(module_path)
+        if match is not None:
+            matches.append((pattern, replacement, match))
+    if not matches:
+        return None
+    if len(matches) > 1:
+        rule_descriptions = "\n".join(f"  - r{p.pattern!r} → {r!r}" for p, r, _ in matches)
+        # ValueError (not RuntimeError) so this propagates through the parent's
+        # NotImplementedError/RuntimeError handler in _register_recursive_converters.
+        # Ambiguous-match is a config bug that should surface immediately.
+        raise ValueError(
+            f"Multiple module resolver rules matched {module_path!r}:\n"
+            f"{rule_descriptions}\n"
+            f"Remove one of them or make their patterns mutually exclusive."
+        )
+    _pattern, replacement, match = matches[0]
+    return replacement.format(*match.groups(), **match.groupdict())
+
+
 def set_module_resolver(
     resolver: Callable[[str], str | None] | None,
 ) -> None:
     """Install a hook that remaps the Python module path before import.
 
-    The resolver receives the fully-qualified module path (e.g.
-    ``"mycompany.v1.messages_pb2"``) and should return a replacement path, or ``None``
-    to use the original. This is the easy way to handle projects where the proto package
-    doesn't match the Python package::
-
-        def resolver(module_path: str) -> str | None:
-            if module_path.startswith("ultravox."):
-                return f"ultravox_proto.{module_path}"
-            return None
-
-        proto_converter.set_module_resolver(resolver)
-
-    Pass ``None`` to remove a previously installed resolver.
+    .. deprecated::
+        Use :func:`add_module_resolver_rule` for the common case of prefix
+        remapping. For arbitrary logic that regex rules can't express, use
+        :func:`set_type_resolver` instead.
     """
+    warnings.warn(
+        "set_module_resolver is deprecated; use add_module_resolver_rule for "
+        "prefix remapping, or set_type_resolver for arbitrary descriptor-to-class logic.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     global _module_resolver
     _module_resolver = resolver
 
@@ -510,10 +577,16 @@ def _descriptor_to_type(desc: descriptor_mod.Descriptor) -> type[message.Message
         temp = temp.containing_type
     package_name = temp.full_name.rsplit(".", 1)[0] if "." in temp.full_name else ""
 
+    qualified = f"{package_name}.{module_name}" if package_name else module_name
+    # Apply rules outside the try/except — ambiguous-match and format errors are
+    # configuration bugs that should propagate, not be swallowed as "couldn't resolve".
+    remapped = _apply_module_resolver_rules(qualified)
+    if remapped is not None:
+        qualified = remapped
+    elif _module_resolver is not None:
+        qualified = _module_resolver(qualified) or qualified
+
     try:
-        qualified = f"{package_name}.{module_name}" if package_name else module_name
-        if _module_resolver is not None:
-            qualified = _module_resolver(qualified) or qualified
         mod = importlib.import_module(qualified)
         clazz = getattr(mod, top_class_name)
         for nesting in class_nesting:
@@ -522,7 +595,7 @@ def _descriptor_to_type(desc: descriptor_mod.Descriptor) -> type[message.Message
     except Exception as e:
         raise RuntimeError(
             f"Couldn't resolve type for {desc.full_name}. If your proto packages don't "
-            f"map to Python packages, use set_module_resolver() or set_type_resolver()."
+            f"map to Python packages, use add_module_resolver_rule() or set_type_resolver()."
         ) from e
 
 
