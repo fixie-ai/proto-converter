@@ -97,7 +97,7 @@ def set_type_resolver(
 
 
 def add_module_resolver_rule(pattern: str, replacement: str) -> None:
-    """Add a regex rule for remapping Python module paths during type resolution.
+    r"""Add a regex rule for remapping Python module paths during type resolution.
 
     The pattern must fully match the Python module path (as derived from the
     proto package + file name). On match, the replacement is produced by calling
@@ -108,7 +108,7 @@ def add_module_resolver_rule(pattern: str, replacement: str) -> None:
     the Python package ``ultravox_proto``::
 
         proto_converter.add_module_resolver_rule(
-            r"ultravox\\.(?P<rest>.+)", "ultravox_proto.ultravox.{rest}"
+            r"ultravox\.(?P<rest>.+)", "ultravox_proto.ultravox.{rest}"
         )
 
     Note that capture groups are **0-indexed** in the replacement string (to match
