@@ -111,9 +111,15 @@ def add_module_resolver_rule(pattern: str, replacement: str) -> None:
             r"ultravox\\.(?P<rest>.+)", "ultravox_proto.ultravox.{rest}"
         )
 
+    Note that capture groups are **0-indexed** in the replacement string (to match
+    ``str.format`` conventions), even though regex itself treats them as 1-indexed.
+    So the first unnamed group is ``{0}``, not ``{1}``. Prefer named groups to
+    avoid confusion. Literal braces in the replacement must be escaped as
+    ``{{`` and ``}}``.
+
     Rules compose: multiple calls add independent rules. If more than one rule
-    matches a given module path, conversion raises ``ValueError`` — ambiguous
-    matches are treated as configuration bugs.
+    matches a given module path, converter construction raises ``ValueError`` —
+    ambiguous matches are treated as configuration bugs.
 
     Adding a rule whose pattern is already registered with the same replacement is
     a no-op (useful when multiple modules register the same rule at import time).
@@ -132,12 +138,11 @@ def add_module_resolver_rule(pattern: str, replacement: str) -> None:
 
 
 def remove_module_resolver_rule(pattern: str) -> None:
-    """Remove a previously-added resolver rule. Raises ``KeyError`` if not found."""
+    """Remove a previously-added resolver rule. No-op if the rule isn't registered."""
     for i, (existing_pattern, _) in enumerate(_module_resolver_rules):
         if existing_pattern.pattern == pattern:
             del _module_resolver_rules[i]
             return
-    raise KeyError(f"No resolver rule registered with pattern {pattern!r}")
 
 
 def _apply_module_resolver_rules(module_path: str) -> str | None:
@@ -169,13 +174,10 @@ def set_module_resolver(
     """Install a hook that remaps the Python module path before import.
 
     .. deprecated::
-        Use :func:`add_module_resolver_rule` for the common case of prefix
-        remapping. For arbitrary logic that regex rules can't express, use
-        :func:`set_type_resolver` instead.
+        Use :func:`add_module_resolver_rule` instead.
     """
     warnings.warn(
-        "set_module_resolver is deprecated; use add_module_resolver_rule for "
-        "prefix remapping, or set_type_resolver for arbitrary descriptor-to-class logic.",
+        "set_module_resolver is deprecated; use add_module_resolver_rule instead.",
         DeprecationWarning,
         stacklevel=2,
     )
@@ -593,9 +595,26 @@ def _descriptor_to_type(desc: descriptor_mod.Descriptor) -> type[message.Message
             clazz = getattr(clazz, nesting)
         return clazz
     except Exception as e:
+        # If a rule matched the path as a prefix but not fully, the user probably
+        # forgot a (.+) at the end. That's almost certainly a config bug — raise
+        # ValueError so it propagates through the parent's exception handling
+        # rather than being swallowed as "unhandled fields".
+        near_misses = [
+            (p.pattern, r)
+            for p, r in _module_resolver_rules
+            if p.match(qualified) is not None and p.fullmatch(qualified) is None
+        ]
+        if near_misses:
+            near_miss_desc = "\n".join(f"  - r{p!r} → {r!r}" for p, r in near_misses)
+            raise ValueError(
+                f"Couldn't resolve type for {desc.full_name} ({qualified!r}).\n"
+                f"The following rule(s) matched a prefix but not the full path. Rule "
+                f"patterns must fullmatch; you may need to add a trailing capture like "
+                f"(.+):\n{near_miss_desc}"
+            ) from e
         raise RuntimeError(
             f"Couldn't resolve type for {desc.full_name}. If your proto packages don't "
-            f"map to Python packages, use add_module_resolver_rule() or set_type_resolver()."
+            f"map to Python packages, use add_module_resolver_rule()."
         ) from e
 
 

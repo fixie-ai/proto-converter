@@ -104,16 +104,15 @@ proto_converter.add_module_resolver_rule(
 The pattern must fully match the Python module path (as derived from the proto
 package + file name, e.g. `"ultravox.v1.messages_pb2"`). Named and positional
 capture groups are available in the replacement via `str.format` — named groups
-as keyword args and positional groups as `{0}`, `{1}`, etc.
+as keyword args and positional groups as `{0}`, `{1}`, etc. Note that groups
+are **0-indexed** in the replacement string (matching `str.format` conventions)
+rather than 1-indexed like they are in regex substitution syntax. Literal
+braces in the replacement must be escaped as `{{` and `}}`.
 
 Rules compose: multiple calls add independent rules, so libraries can each
 register their own mappings without coordinating. If more than one rule matches
-a given module path, conversion raises `ValueError` — ambiguous matches are
-treated as configuration bugs.
-
-For full control over type resolution (e.g. when you need to intercept at the
-`Descriptor` level), use `set_type_resolver` instead — it receives a protobuf
-`Descriptor` and returns a Python class directly.
+a given module path, converter construction raises `ValueError` — ambiguous
+matches are treated as configuration bugs.
 
 ## Test recommendations
 

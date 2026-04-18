@@ -3,6 +3,8 @@ from google.protobuf import any_pb2
 from google.protobuf import struct_pb2
 from hamcrest import assert_that
 from proto_matcher import equals_proto
+from remapped_api import api_pb2 as remapped_api_pb2
+from remapped_internal import internal_pb2 as remapped_internal_pb2
 from test_api import api_pb2
 from test_internal import internal_pb2
 
@@ -454,6 +456,11 @@ class TestModuleResolver:
 
 
 class TestModuleResolverRules:
+    """Tests for add_module_resolver_rule using protos whose proto packages
+    (``ext_api.remote.v1`` and ``ext_internal.remote.v1``) don't match their
+    Python module paths (``remapped_api.api_pb2`` and ``remapped_internal.internal_pb2``).
+    Conversion between them only works when appropriate rules are registered."""
+
     @pytest.fixture(autouse=True)
     def _clear_rules(self):
         """Ensure each test starts with no rules registered."""
@@ -465,51 +472,58 @@ class TestModuleResolverRules:
         _module_resolver_rules.clear()
         _module_resolver_rules.extend(saved)
 
+    def _src(self) -> remapped_api_pb2.Wrapper:
+        return remapped_api_pb2.Wrapper(inner=remapped_api_pb2.Inner(name="hello"))
+
+    def test_no_rule_fails(self):
+        """Without any resolver rule, conversion fails because the default path
+        (derived from the proto package) doesn't match the Python module.
+
+        The "Couldn't resolve type" RuntimeError from ``_descriptor_to_type`` is
+        caught during recursive-converter registration, so the user-visible error
+        is "Unhandled fields" at validation time."""
+        with pytest.raises(NotImplementedError, match="Unhandled fields"):
+            proto_converter.convert(self._src(), remapped_internal_pb2.Wrapper)
+
     def test_rule_with_named_group(self):
         """A rule with a named capture group rewrites the module path via str.format."""
-        # Identity remap for test_internal using a named group.
         proto_converter.add_module_resolver_rule(
-            r"test_internal\.(?P<rest>.+)", "test_internal.{rest}"
+            r"ext_api\.remote\.v1\.(?P<mod>\w+)", "remapped_api.{mod}"
+        )
+        proto_converter.add_module_resolver_rule(
+            r"ext_internal\.remote\.v1\.(?P<mod>\w+)", "remapped_internal.{mod}"
         )
 
-        src = api_pb2.Person(
-            name="test",
-            address=api_pb2.Address(street="Main St", city="Town"),
-        )
-        dest = proto_converter.convert(src, internal_pb2.Person)
-        assert dest.name == "test"
+        dest = proto_converter.convert(self._src(), remapped_internal_pb2.Wrapper)
+        assert dest.inner.name == "hello"
 
     def test_rule_with_positional_group(self):
-        """Positional groups are passed as *args to str.format."""
-        proto_converter.add_module_resolver_rule(r"test_internal\.(.+)", "test_internal.{0}")
-
-        src = api_pb2.Person(
-            name="test",
-            address=api_pb2.Address(street="Main St", city="Town"),
+        """Positional groups are 0-indexed in the replacement (str.format convention),
+        NOT 1-indexed like regex substitution."""
+        proto_converter.add_module_resolver_rule(r"ext_api\.remote\.v1\.(\w+)", "remapped_api.{0}")
+        proto_converter.add_module_resolver_rule(
+            r"ext_internal\.remote\.v1\.(\w+)", "remapped_internal.{0}"
         )
-        dest = proto_converter.convert(src, internal_pb2.Person)
-        assert dest.name == "test"
 
-    def test_rule_requires_full_match(self):
-        """A pattern that only matches a prefix does not fire."""
-        # Pattern matches 'test_internal' but not the full 'test_internal.internal_pb2'.
-        proto_converter.add_module_resolver_rule(r"test_internal", "bogus.does_not_exist")
+        dest = proto_converter.convert(self._src(), remapped_internal_pb2.Wrapper)
+        assert dest.inner.name == "hello"
 
-        # Conversion should still work because the rule doesn't fullmatch the full path,
-        # so the default resolver is used. Person has a nested Address field that
-        # triggers module resolution.
-        src = api_pb2.Person(
-            name="test",
-            address=api_pb2.Address(street="Main St", city="Town"),
-        )
-        dest = proto_converter.convert(src, internal_pb2.Person)
-        assert dest.name == "test"
+    def test_near_miss_is_called_out_in_error(self):
+        """When a rule's pattern matches the path as a prefix but doesn't fullmatch,
+        the resolver surfaces a ValueError that mentions the near-miss, so users
+        aren't left wondering why their rule didn't fire.
+
+        (ValueError — not RuntimeError — so it propagates through the recursive
+        converter's ``except (NotImplementedError, RuntimeError)`` handler instead
+        of being silently swallowed into a generic "Unhandled fields" error.)"""
+        proto_converter.add_module_resolver_rule(r"ext_api\.remote\.v1", "does_not_matter")
+        with pytest.raises(ValueError, match="matched a prefix but not the full path"):
+            proto_converter.convert(self._src(), remapped_internal_pb2.Wrapper)
 
     def test_duplicate_rule_same_replacement_is_noop(self):
         """Adding the same pattern/replacement twice is silently deduped."""
         proto_converter.add_module_resolver_rule(r"foo\..+", "bar.{0}")
         proto_converter.add_module_resolver_rule(r"foo\..+", "bar.{0}")  # no-op
-        # Should still work (no ambiguous match since it's deduped to one rule).
         from proto_converter.converter import _module_resolver_rules
 
         assert len(_module_resolver_rules) == 1
@@ -520,16 +534,14 @@ class TestModuleResolverRules:
             proto_converter.add_module_resolver_rule(r"foo\..+", "baz.{0}")
 
     def test_ambiguous_match_raises(self):
-        """Two rules matching the same path produce a RuntimeError at conversion."""
-        proto_converter.add_module_resolver_rule(r"test_internal\..+", "test_internal.{0}")
+        """Two rules matching the same path raise at construction time."""
+        # Two different patterns that both match the api path.
+        proto_converter.add_module_resolver_rule(r"ext_api\.remote\.v1\.(\w+)", "remapped_api.{0}")
         proto_converter.add_module_resolver_rule(
-            r"test_internal\.(?P<rest>.+)", "test_internal.{rest}"
+            r"ext_api\.remote\.v1\.(?P<mod>\w+)", "remapped_api.{mod}"
         )
-
-        # Person has a nested Address field, triggering module resolution.
-        src = api_pb2.Person(name="test", address=api_pb2.Address(street="Main St", city="Town"))
         with pytest.raises(ValueError, match="Multiple module resolver rules matched"):
-            proto_converter.convert(src, internal_pb2.Person)
+            proto_converter.convert(self._src(), remapped_internal_pb2.Wrapper)
 
     def test_remove_rule(self):
         proto_converter.add_module_resolver_rule(r"foo\..+", "bar.{0}")
@@ -538,9 +550,9 @@ class TestModuleResolverRules:
 
         assert len(_module_resolver_rules) == 0
 
-    def test_remove_nonexistent_rule_raises(self):
-        with pytest.raises(KeyError, match="No resolver rule"):
-            proto_converter.remove_module_resolver_rule(r"nothing\..+")
+    def test_remove_nonexistent_rule_is_noop(self):
+        # Idempotent: removing a rule that was never added doesn't raise.
+        proto_converter.remove_module_resolver_rule(r"nothing\..+")
 
 
 # ---------------------------------------------------------------------------
