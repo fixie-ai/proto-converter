@@ -1,5 +1,7 @@
 # proto-converter
 
+[![pypi-v](https://img.shields.io/pypi/v/proto-converter.svg?label=proto-converter&color=orange)](https://pypi.org/project/proto-converter/)
+
 Automatic deep conversion between compatible protocol buffer types. Inspired by
 [python-proto-converter](https://github.com/google/python-proto-converter) but
 designed to require far less boilerplate.
