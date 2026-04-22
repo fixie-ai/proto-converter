@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+// Proto package intentionally differs from the Python module path:
+//   proto package:   ext_internal.remote.v1
+//   python module:   remapped_internal.internal_pb2
+// See remapped_api/api.proto for details.
+package ext_internal.remote.v1;
+
+message Inner {
+  string name = 1;
+}
+
+message Wrapper {
+  Inner inner = 1;
+}

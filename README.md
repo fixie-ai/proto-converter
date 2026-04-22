@@ -90,22 +90,29 @@ subclasses before calling `convert()`.
 The recursive converter needs to map protobuf `Descriptor` objects back to Python
 classes. By default it uses `importlib`, assuming the proto package maps directly
 to a Python package. If your generated code lives under a different prefix, use
-`set_module_resolver` to remap the import path:
+`add_module_resolver_rule` to register a regex-based remapping:
 
 ```python
 import proto_converter
 
-def resolver(module_path: str) -> str | None:
-    if module_path.startswith("ultravox."):
-        return f"ultravox_proto.{module_path}"
-    return None  # use the original path
-
-proto_converter.set_module_resolver(resolver)
+# Remap proto packages starting with "ultravox." to Python packages under "ultravox_proto.ultravox".
+proto_converter.add_module_resolver_rule(
+    r"ultravox\.(?P<rest>.+)", "ultravox_proto.ultravox.{rest}"
+)
 ```
 
-For full control over type resolution (e.g. when you need to intercept at the
-`Descriptor` level), use `set_type_resolver` instead — it receives a protobuf
-`Descriptor` and returns a Python class directly.
+The pattern must fully match the Python module path (as derived from the proto
+package + file name, e.g. `"ultravox.v1.messages_pb2"`). Named and positional
+capture groups are available in the replacement via `str.format` — named groups
+as keyword args and positional groups as `{0}`, `{1}`, etc. Note that groups
+are **0-indexed** in the replacement string (matching `str.format` conventions)
+rather than 1-indexed like they are in regex substitution syntax. Literal
+braces in the replacement must be escaped as `{{` and `}}`.
+
+Rules compose: multiple calls add independent rules, so libraries can each
+register their own mappings without coordinating. If more than one rule matches
+a given module path, converter construction raises `ValueError` — ambiguous
+matches are treated as configuration bugs.
 
 ## Test recommendations
 
